@@ -383,11 +383,9 @@ version = "0.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
-dev = [
-    { name = "pre-commit" },
-]
-lint = [
+linters = [
     { name = "mypy" },
+    { name = "pre-commit" },
     { name = "ruff" },
     { name = "wemake-python-styleguide" },
 ]
@@ -399,9 +397,9 @@ tests = [
 [package.metadata]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pre-commit", specifier = ">=4.6.0" }]
-lint = [
+linters = [
     { name = "mypy", specifier = ">=1.20.2" },
+    { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "ruff", specifier = ">=0.15.11" },
     { name = "wemake-python-styleguide", specifier = ">=1.6.1" },
 ]
