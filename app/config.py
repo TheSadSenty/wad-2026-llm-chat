@@ -51,10 +51,18 @@ class LlmConfig(BaseModel):
     gguf_path: Path
 
 
+class AuthConfig(BaseModel):
+    """Authentication configuration."""
+
+    jwt_secret: str
+    access_token_ttl_minutes: int
+
+
 class Config(BaseSettings):
     """Runtime configuration."""
 
     app: AppConfig
+    auth: AuthConfig
     database: DatabaseConfig
     llm: LlmConfig
 

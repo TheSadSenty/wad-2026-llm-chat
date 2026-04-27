@@ -11,7 +11,7 @@ from app.db import get_db_session
 from app.forms import ChatPromptForm
 from app.models.csat import Chat
 from app.models.user import User
-from app.services.auth import AUTH_COOKIE_NAME, get_user_by_id
+from app.services.auth import get_current_user_from_request
 from app.services.chat import (
     append_llm_reply_async,
     append_user_message_async,
@@ -48,14 +48,6 @@ def _redirect_to_login() -> RedirectResponse:
     return RedirectResponse(url='/login', status_code=303)
 
 
-async def _get_current_user(request: Request, session: AsyncSession) -> User | None:
-    raw_user_id = request.cookies.get(AUTH_COOKIE_NAME)
-    if raw_user_id is None or not raw_user_id.isdigit():
-        return None
-
-    return await get_user_by_id(session, int(raw_user_id))
-
-
 def _render_chat_page(
     request: Request,
     *,
@@ -83,10 +75,9 @@ def _render_chat_page(
 @chat_router.get('/', include_in_schema=False, response_model=None)
 async def index(
     request: Request,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RedirectResponse:
     """Redirect the visitor to the correct entry page."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return RedirectResponse(url='/register', status_code=303)
 
@@ -100,7 +91,7 @@ async def chat_index(
     chat_id: int | None = None,
 ) -> HTMLResponse | RedirectResponse:
     """Render the chat workspace for the current user."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return _redirect_to_login()
 
@@ -126,7 +117,7 @@ async def create_chat(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RedirectResponse | HTMLResponse:
     """Create a new chat from the first user prompt."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return _redirect_to_login()
 
@@ -167,7 +158,7 @@ async def send_message(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RedirectResponse | HTMLResponse:
     """Append a new message to an existing chat."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return _redirect_to_login()
 
@@ -213,7 +204,7 @@ async def create_chat_stream(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> StreamingResponse | PlainTextResponse | RedirectResponse:
     """Create a chat and stream the assistant response incrementally."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return _redirect_to_login()
 
@@ -279,7 +270,7 @@ async def send_message_stream(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> StreamingResponse | PlainTextResponse | RedirectResponse:
     """Append a user message and stream the assistant response incrementally."""
-    current_user = await _get_current_user(request, session)
+    current_user = get_current_user_from_request(request)
     if current_user is None:
         return _redirect_to_login()
 

@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db import get_db_session
 from app.forms import LoginForm, RegistrationForm
 from app.services.auth import (
@@ -13,6 +14,7 @@ from app.services.auth import (
     InvalidCredentialsError,
     RegistrationConflictError,
     authenticate_user_async,
+    create_user_access_token,
     register_user_async,
 )
 
@@ -107,7 +109,7 @@ async def login(
     login_form_data: Annotated[LoginForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> HTMLResponse | RedirectResponse:
-    """Authenticate a user and start a browser session."""
+    """Authenticate a user and issue a JWT-backed auth cookie."""
     try:
         user = await authenticate_user_async(
             session=session,
@@ -123,18 +125,20 @@ async def login(
         )
 
     response = RedirectResponse(url='/chats', status_code=HTTPStatus.SEE_OTHER)
+    max_age = get_settings().auth.access_token_ttl_minutes * 60
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
-        value=str(user.id),
+        value=create_user_access_token(user),
         httponly=True,
         samesite='lax',
+        max_age=max_age,
     )
     return response
 
 
 @auth_router.post('/logout', response_model=None)
 async def logout() -> RedirectResponse:
-    """Clear the browser session."""
+    """Clear the JWT auth cookie."""
     response = RedirectResponse(url='/login', status_code=HTTPStatus.SEE_OTHER)
     response.delete_cookie(AUTH_COOKIE_NAME)
     return response

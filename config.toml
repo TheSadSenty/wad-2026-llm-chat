@@ -2,6 +2,10 @@
 host = '127.0.0.1'
 port = 8000
 
+[auth]
+jwt_secret = 'change-this-jwt-secret'
+access_token_ttl_minutes = 60
+
 [database.postgres]
 host = '127.0.0.1'
 port = 5432
