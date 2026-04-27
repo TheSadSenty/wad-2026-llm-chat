@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4efe6;
+            --panel: rgba(255, 251, 245, 0.92);
+            --text: #1f1a17;
+            --muted: #6c5f56;
+            --accent: #b84c2a;
+            --accent-dark: #8f3113;
+            --error: #9f1d35;
+            --success: #196347;
+            --border: rgba(31, 26, 23, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background:
+                radial-gradient(circle at top left, rgba(184, 76, 42, 0.22), transparent 28rem),
+                radial-gradient(circle at bottom right, rgba(25, 99, 71, 0.18), transparent 30rem),
+                linear-gradient(135deg, #f7f1e8, #efe4d4);
+            color: var(--text);
+            font-family: Georgia, 'Times New Roman', serif;
+        }
+
+        main {
+            width: min(100%, 28rem);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 32px;
+            background: var(--panel);
+            box-shadow: 0 20px 60px rgba(31, 26, 23, 0.12);
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            margin: 0 0 12px;
+            font-size: clamp(2rem, 5vw, 2.8rem);
+            line-height: 0.95;
+        }
+
+        p {
+            margin: 0 0 24px;
+            color: var(--muted);
+        }
+
+        form {
+            display: grid;
+            gap: 16px;
+        }
+
+        label {
+            display: grid;
+            gap: 8px;
+            font-size: 0.95rem;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.8);
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+            border-radius: 999px;
+            padding: 14px 18px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            color: #fff;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            border-radius: 14px;
+        }
+
+        .message.error {
+            background: rgba(159, 29, 53, 0.08);
+            color: var(--error);
+        }
+
+        .message.success {
+            background: rgba(25, 99, 71, 0.09);
+            color: var(--success);
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Create account</h1>
+    <p>Register with a unique email address and password.</p>
+
+    {% if error_message %}
+    <div class="message error">{{ error_message }}</div>
+    {% endif %}
+
+    {% if success_message %}
+    <div class="message success">{{ success_message }}</div>
+    {% endif %}
+
+    <form method="post" action="/register">
+        <label>
+            Email
+            <input type="email" name="login" value="{{ login }}" required autocomplete="email">
+        </label>
+        <label>
+            Password
+            <input type="password" name="password" required autocomplete="new-password">
+        </label>
+        <button type="submit">Register</button>
+    </form>
+</main>
+</body>
+</html>

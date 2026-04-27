@@ -1,0 +1,72 @@
+services:
+  prestart:
+    build:
+      context: .
+    networks:
+      - app_network
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    command: >
+      sh -c "alembic upgrade head"
+    environment:
+      LLM_CHAT_DATABASE__POSTGRES__HOST: db
+      LLM_CHAT_DATABASE__POSTGRES__PORT: 5432
+      LLM_CHAT_DATABASE__POSTGRES__DBNAME: ${POSTGRES_DB?Variable not set}
+      LLM_CHAT_DATABASE__POSTGRES__USER: ${POSTGRES_USER?Variable not set}
+      LLM_CHAT_DATABASE__POSTGRES__PASSWORD: ${POSTGRES_PASSWORD?Variable not set}
+
+  backend:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      prestart:
+        condition: service_completed_successfully
+    environment:
+      LLM_CHAT_APP__HOST: 0.0.0.0
+      LLM_CHAT_APP__PORT: 8000
+      LLM_CHAT_DATABASE__POSTGRES__HOST: db
+      LLM_CHAT_DATABASE__POSTGRES__PORT: 5432
+      LLM_CHAT_DATABASE__POSTGRES__DBNAME: ${POSTGRES_DB?Variable not set}
+      LLM_CHAT_DATABASE__POSTGRES__USER: ${POSTGRES_USER?Variable not set}
+      LLM_CHAT_DATABASE__POSTGRES__PASSWORD: ${POSTGRES_PASSWORD?Variable not set}
+    ports:
+      - '8000:8000'
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  db:
+    image: postgres:17-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+
+volumes:
+  postgres_data:
+
+networks:
+  app_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
