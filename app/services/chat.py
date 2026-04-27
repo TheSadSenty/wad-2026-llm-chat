@@ -18,36 +18,52 @@ def get_user_chat(*, session: Session, user: User, chat_id: int) -> Chat | None:
 
 def create_chat_with_llm_reply(*, session: Session, user: User, prompt: str) -> Chat:
     """Create a new chat and persist an LLM-generated assistant reply."""
+    chat = create_chat_with_user_message(session=session, user=user, prompt=prompt)
+    try:
+        assistant_reply = get_llm_service().generate_reply(messages=chat.messages)
+        return persist_assistant_reply(session=session, chat=chat, content=assistant_reply)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def append_llm_reply(*, session: Session, chat: Chat, prompt: str) -> Chat:
+    """Append a user message and an LLM-generated assistant message to an existing chat."""
+    updated_chat = append_user_message(session=session, chat=chat, prompt=prompt)
+    try:
+        assistant_reply = get_llm_service().generate_reply(messages=updated_chat.messages)
+        return persist_assistant_reply(session=session, chat=updated_chat, content=assistant_reply)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def create_chat_with_user_message(*, session: Session, user: User, prompt: str) -> Chat:
+    """Create a new chat and persist only the initial user message."""
     normalized_prompt = prompt.strip()
     chat = add_chat(
         session,
         user_id=user.id,
         title=_build_chat_title(normalized_prompt),
     )
-    try:
-        add_message(session, chat_id=chat.id, role='user', content=normalized_prompt)
-        assistant_reply = get_llm_service().generate_reply(messages=[], prompt=normalized_prompt)
-        add_message(session, chat_id=chat.id, role='assistant', content=assistant_reply)
-    except Exception:
-        session.rollback()
-        raise
-
+    add_message(session, chat_id=chat.id, role='user', content=normalized_prompt)
     session.commit()
     session.expire_all()
     return get_chat_for_user(session, chat_id=chat.id, user_id=user.id) or chat
 
 
-def append_llm_reply(*, session: Session, chat: Chat, prompt: str) -> Chat:
-    """Append a user message and an LLM-generated assistant message to an existing chat."""
+def append_user_message(*, session: Session, chat: Chat, prompt: str) -> Chat:
+    """Persist a new user message in an existing chat."""
     normalized_prompt = prompt.strip()
-    try:
-        add_message(session, chat_id=chat.id, role='user', content=normalized_prompt)
-        assistant_reply = get_llm_service().generate_reply(messages=chat.messages, prompt=normalized_prompt)
-        add_message(session, chat_id=chat.id, role='assistant', content=assistant_reply)
-    except Exception:
-        session.rollback()
-        raise
+    add_message(session, chat_id=chat.id, role='user', content=normalized_prompt)
+    session.commit()
+    session.expire_all()
+    return get_chat_for_user(session, chat_id=chat.id, user_id=chat.user_id) or chat
 
+
+def persist_assistant_reply(*, session: Session, chat: Chat, content: str) -> Chat:
+    """Persist a generated assistant reply."""
+    add_message(session, chat_id=chat.id, role='assistant', content=content)
     session.commit()
     session.expire_all()
     return get_chat_for_user(session, chat_id=chat.id, user_id=chat.user_id) or chat

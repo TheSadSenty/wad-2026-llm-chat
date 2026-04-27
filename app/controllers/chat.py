@@ -1,7 +1,9 @@
+import json
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -11,7 +13,16 @@ from app.models.csat import Chat
 from app.models.user import User
 from app.repositories.users import get_user_by_id
 from app.services.auth import AUTH_COOKIE_NAME
-from app.services.chat import append_llm_reply, create_chat_with_llm_reply, get_user_chat, list_user_chats
+from app.services.chat import (
+    append_llm_reply,
+    append_user_message,
+    create_chat_with_llm_reply,
+    create_chat_with_user_message,
+    get_user_chat,
+    list_user_chats,
+    persist_assistant_reply,
+)
+from app.services.llm import get_llm_service
 
 chat_router = APIRouter(tags=['chat'])
 templates = Jinja2Templates(directory='app/templates')
@@ -21,6 +32,23 @@ class ChatPromptForm(BaseModel):
     """User prompt submitted from the chat form."""
 
     prompt: str
+
+
+def _sse_event(event: str, data: dict[str, object]) -> str:
+    payload = json.dumps(data)
+    return f'event: {event}\ndata: {payload}\n\n'
+
+
+def _streaming_response(event_stream: Iterator[str]) -> StreamingResponse:
+    return StreamingResponse(
+        event_stream,
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 
 def _redirect_to_login() -> RedirectResponse:
@@ -183,3 +211,117 @@ async def send_message(
         )
 
     return RedirectResponse(url=f'/chats?chat_id={chat_id}', status_code=303)
+
+
+@chat_router.post('/chats/stream', response_class=StreamingResponse, response_model=None)
+async def create_chat_stream(
+    request: Request,
+    data: Annotated[ChatPromptForm, Form()],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> StreamingResponse | PlainTextResponse | RedirectResponse:
+    """Create a chat and stream the assistant response incrementally."""
+    current_user = _get_current_user(request, session)
+    if current_user is None:
+        return _redirect_to_login()
+
+    prompt = data.prompt.strip()
+    if not prompt:
+        return PlainTextResponse('Message cannot be empty.', status_code=422)
+
+    try:
+        chat = create_chat_with_user_message(session=session, user=current_user, prompt=prompt)
+    except RuntimeError as error:
+        return PlainTextResponse(str(error), status_code=503)
+
+    def event_stream() -> Iterator[str]:
+        assistant_parts: list[str] = []
+        try:
+            yield _sse_event(
+                'meta',
+                {
+                    'chat_id': chat.id,
+                    'chat_title': chat.title,
+                    'chat_url': f'/chats?chat_id={chat.id}',
+                    'message_count': len(chat.messages),
+                },
+            )
+            for token in get_llm_service().stream_reply(messages=chat.messages):
+                assistant_parts.append(token)
+                yield _sse_event('token', {'text': token})
+
+            final_reply = ''.join(assistant_parts).strip()
+            if not final_reply:
+                msg = 'The local model returned an empty response.'
+                raise RuntimeError(msg)
+
+            updated_chat = persist_assistant_reply(session=session, chat=chat, content=final_reply)
+            yield _sse_event(
+                'done',
+                {
+                    'chat_id': updated_chat.id,
+                    'chat_url': f'/chats?chat_id={updated_chat.id}',
+                    'message_count': len(updated_chat.messages),
+                },
+            )
+        except Exception as error:
+            yield _sse_event('error', {'message': str(error)})
+
+    return _streaming_response(event_stream())
+
+
+@chat_router.post('/chats/{chat_id}/messages/stream', response_class=StreamingResponse, response_model=None)
+async def send_message_stream(
+    request: Request,
+    chat_id: int,
+    data: Annotated[ChatPromptForm, Form()],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> StreamingResponse | PlainTextResponse | RedirectResponse:
+    """Append a user message and stream the assistant response incrementally."""
+    current_user = _get_current_user(request, session)
+    if current_user is None:
+        return _redirect_to_login()
+
+    chat = get_user_chat(session=session, user=current_user, chat_id=chat_id)
+    if chat is None:
+        return PlainTextResponse('Chat not found.', status_code=404)
+
+    prompt = data.prompt.strip()
+    if not prompt:
+        return PlainTextResponse('Message cannot be empty.', status_code=422)
+
+    updated_chat = append_user_message(session=session, chat=chat, prompt=prompt)
+
+    def event_stream() -> Iterator[str]:
+        assistant_parts: list[str] = []
+        try:
+            yield _sse_event(
+                'meta',
+                {
+                    'chat_id': updated_chat.id,
+                    'chat_title': updated_chat.title,
+                    'chat_url': f'/chats?chat_id={updated_chat.id}',
+                    'message_count': len(updated_chat.messages),
+                },
+            )
+            for token in get_llm_service().stream_reply(messages=updated_chat.messages):
+                assistant_parts.append(token)
+                yield _sse_event('token', {'text': token})
+
+            final_reply = ''.join(assistant_parts).strip()
+            if not final_reply:
+                msg = 'The local model returned an empty response.'
+                raise RuntimeError(msg)
+
+            final_chat = persist_assistant_reply(session=session, chat=updated_chat, content=final_reply)
+            yield _sse_event(
+                'done',
+                {
+                    'chat_id': final_chat.id,
+                    'chat_url': f'/chats?chat_id={final_chat.id}',
+                    'message_count': len(final_chat.messages),
+                },
+            )
+        except Exception as error:
+            yield _sse_event('error', {'message': str(error)})
+
+    return _streaming_response(event_stream())

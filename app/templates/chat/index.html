@@ -130,6 +130,21 @@
             background: var(--assistant-bubble);
         }
 
+        .message.streaming {
+            position: relative;
+        }
+
+        .message.streaming::after {
+            content: '';
+            display: inline-block;
+            width: 0.65rem;
+            height: 1rem;
+            margin-left: 0.25rem;
+            vertical-align: text-bottom;
+            background: rgba(15, 91, 120, 0.8);
+            animation: blink 1s steps(2, start) infinite;
+        }
+
         .message-role {
             margin-bottom: 8px;
             font-size: 0.82rem;
@@ -187,6 +202,16 @@
             color: var(--danger);
         }
 
+        .flash[hidden] {
+            display: none;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0;
+            }
+        }
+
         @media (max-width: 900px) {
             .layout {
                 grid-template-columns: 1fr;
@@ -224,9 +249,9 @@
 
         <section>
             <h2>Your chats</h2>
-            <div class="chat-list">
+            <div class="chat-list" id="chat-list">
                 {% for chat in chats %}
-                <a class="chat-link {% if selected_chat and chat.id == selected_chat.id %}active{% endif %}" href="/chats?chat_id={{ chat.id }}">
+                <a class="chat-link {% if selected_chat and chat.id == selected_chat.id %}active{% endif %}" data-chat-id="{{ chat.id }}" href="/chats?chat_id={{ chat.id }}">
                     <div class="chat-title">{{ chat.title }}</div>
                     <div class="meta">{{ chat.messages|length }} messages</div>
                 </a>
@@ -241,36 +266,339 @@
         <div class="topbar">
             <div>
                 <p class="eyebrow">Local GGUF chat</p>
-                <h2>{% if selected_chat %}{{ selected_chat.title }}{% else %}New conversation{% endif %}</h2>
+                <h2 id="chat-title">{% if selected_chat %}{{ selected_chat.title }}{% else %}New conversation{% endif %}</h2>
             </div>
         </div>
 
-        {% if error_message %}
-        <div class="flash">{{ error_message }}</div>
-        {% endif %}
+        <div class="flash" id="chat-flash" {% if not error_message %}hidden{% endif %}>{{ error_message or '' }}</div>
 
         <section class="panel">
-            <div class="panel-inner">
+            <div class="panel-inner" id="chat-panel">
                 {% if selected_chat %}
-                <div class="messages">
+                <div class="messages" id="messages">
                     {% for message in selected_chat.messages %}
                     <article class="message {{ message.role }}">
                         <div class="message-role">{{ message.role }}</div>
-                        <div>{{ message.content }}</div>
+                        <div class="message-content">{{ message.content }}</div>
                     </article>
                     {% endfor %}
                 </div>
 
-                <form method="post" action="/chats/{{ selected_chat.id }}/messages" style="margin-top: 20px;">
+                <form id="message-form" method="post" action="/chats/{{ selected_chat.id }}/messages" style="margin-top: 20px;">
                     <textarea name="prompt" placeholder="Continue the conversation." required>{{ prompt }}</textarea>
                     <button type="submit">Send</button>
                 </form>
                 {% else %}
-                <p class="empty-note">Create your first chat from the left panel to see stored conversation history here.</p>
+                <p class="empty-note" id="empty-state">Create your first chat from the left panel to see stored conversation history here.</p>
                 {% endif %}
             </div>
         </section>
     </main>
 </div>
+<script>
+    (() => {
+        const state = {
+            currentChatId: {{ selected_chat.id if selected_chat else 'null' }},
+            isStreaming: false,
+        };
+
+        const createForm = document.querySelector('form[action="/chats"]');
+        const panel = document.getElementById('chat-panel');
+        const titleNode = document.getElementById('chat-title');
+        const flashNode = document.getElementById('chat-flash');
+        const chatList = document.getElementById('chat-list');
+
+        bindCreateForm();
+        bindMessageForm(document.getElementById('message-form'));
+
+        function bindCreateForm() {
+            if (!createForm) {
+                return;
+            }
+
+            createForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                void submitPrompt({
+                    form: createForm,
+                    url: '/chats/stream',
+                    isNewChat: true,
+                });
+            });
+        }
+
+        function bindMessageForm(form) {
+            if (!form) {
+                return;
+            }
+
+            form.addEventListener('submit', (event) => {
+                event.preventDefault();
+                if (state.currentChatId === null) {
+                    return;
+                }
+
+                void submitPrompt({
+                    form,
+                    url: `/chats/${state.currentChatId}/messages/stream`,
+                    isNewChat: false,
+                });
+            });
+        }
+
+        async function submitPrompt({ form, url, isNewChat }) {
+            if (state.isStreaming) {
+                return;
+            }
+
+            const textarea = form.querySelector('textarea[name="prompt"]');
+            const button = form.querySelector('button[type="submit"]');
+            const prompt = textarea.value.trim();
+            if (!prompt) {
+                showError('Message cannot be empty.');
+                return;
+            }
+
+            state.isStreaming = true;
+            hideError();
+            button.disabled = true;
+            textarea.disabled = true;
+            textarea.value = '';
+
+            if (isNewChat) {
+                ensureChatShell(prompt);
+            }
+
+            const userMessage = appendMessage('user', prompt);
+            const assistantMessage = appendMessage('assistant', '');
+            assistantMessage.classList.add('streaming');
+            userMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'text/event-stream',
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    },
+                    body: new URLSearchParams({ prompt }),
+                });
+
+                if (!response.ok || !response.body) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Streaming request failed.');
+                }
+
+                let assistantText = '';
+                await consumeEventStream(response.body, (eventName, payload) => {
+                    if (eventName === 'meta') {
+                        applyMeta(payload, isNewChat);
+                        return;
+                    }
+                    if (eventName === 'token') {
+                        assistantText += payload.text || '';
+                        assistantMessage.querySelector('.message-content').textContent = assistantText;
+                        assistantMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                        return;
+                    }
+                    if (eventName === 'done') {
+                        assistantMessage.classList.remove('streaming');
+                        updateChatMeta(payload.chat_id, payload.message_count);
+                        return;
+                    }
+                    if (eventName === 'error') {
+                        assistantMessage.classList.remove('streaming');
+                        assistantMessage.querySelector('.message-content').textContent = payload.message;
+                        showError(payload.message);
+                    }
+                });
+            } catch (error) {
+                assistantMessage.classList.remove('streaming');
+                assistantMessage.querySelector('.message-content').textContent = String(error.message || error);
+                showError(String(error.message || error));
+            } finally {
+                state.isStreaming = false;
+                button.disabled = false;
+                textarea.disabled = false;
+                textarea.focus();
+            }
+        }
+
+        function ensureChatShell(prompt) {
+            panel.innerHTML = '';
+            const messages = document.createElement('div');
+            messages.className = 'messages';
+            messages.id = 'messages';
+            panel.append(messages);
+
+            const form = document.createElement('form');
+            form.id = 'message-form';
+            form.method = 'post';
+            form.style.marginTop = '20px';
+            form.innerHTML = `
+                <textarea name="prompt" placeholder="Continue the conversation." required></textarea>
+                <button type="submit">Send</button>
+            `;
+            panel.append(form);
+            bindMessageForm(form);
+
+            const emptyState = document.getElementById('empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            titleNode.textContent = buildChatTitle(prompt);
+        }
+
+        function appendMessage(role, content) {
+            const messages = ensureMessagesContainer();
+            const article = document.createElement('article');
+            article.className = `message ${role}`;
+            article.innerHTML = `
+                <div class="message-role">${role}</div>
+                <div class="message-content"></div>
+            `;
+            article.querySelector('.message-content').textContent = content;
+            messages.append(article);
+            return article;
+        }
+
+        function ensureMessagesContainer() {
+            let messages = document.getElementById('messages');
+            if (messages) {
+                return messages;
+            }
+
+            messages = document.createElement('div');
+            messages.className = 'messages';
+            messages.id = 'messages';
+            panel.prepend(messages);
+            return messages;
+        }
+
+        function applyMeta(payload, isNewChat) {
+            state.currentChatId = payload.chat_id;
+            titleNode.textContent = payload.chat_title;
+            window.history.replaceState({}, '', payload.chat_url);
+
+            if (isNewChat) {
+                upsertChatLink(payload.chat_id, payload.chat_title, payload.chat_url, payload.message_count);
+                const form = document.getElementById('message-form');
+                if (form) {
+                    form.action = `/chats/${payload.chat_id}/messages`;
+                }
+                return;
+            }
+
+            updateChatSelection(payload.chat_id);
+        }
+
+        function upsertChatLink(chatId, title, url, messageCount) {
+            updateChatSelection(chatId);
+
+            let link = chatList.querySelector(`[data-chat-id="${chatId}"]`);
+            if (!link) {
+                const emptyNote = chatList.querySelector('.empty-note');
+                if (emptyNote) {
+                    emptyNote.remove();
+                }
+
+                link = document.createElement('a');
+                link.className = 'chat-link active';
+                link.dataset.chatId = String(chatId);
+                link.href = url;
+                link.innerHTML = `
+                    <div class="chat-title"></div>
+                    <div class="meta"></div>
+                `;
+                chatList.prepend(link);
+            }
+
+            link.href = url;
+            link.querySelector('.chat-title').textContent = title;
+            link.querySelector('.meta').textContent = `${messageCount} messages`;
+            updateChatSelection(chatId);
+        }
+
+        function updateChatMeta(chatId, messageCount) {
+            const link = chatList.querySelector(`[data-chat-id="${chatId}"]`);
+            if (link) {
+                link.querySelector('.meta').textContent = `${messageCount} messages`;
+            }
+        }
+
+        function updateChatSelection(chatId) {
+            chatList.querySelectorAll('.chat-link').forEach((link) => {
+                const isActive = Number(link.dataset.chatId) === Number(chatId);
+                link.classList.toggle('active', isActive);
+            });
+        }
+
+        function buildChatTitle(prompt) {
+            const compact = prompt.replace(/\s+/g, ' ').trim();
+            if (compact.length <= 48) {
+                return compact;
+            }
+
+            return `${compact.slice(0, 45).trimEnd()}...`;
+        }
+
+        function showError(message) {
+            flashNode.textContent = message;
+            flashNode.hidden = false;
+        }
+
+        function hideError() {
+            flashNode.textContent = '';
+            flashNode.hidden = true;
+        }
+
+        async function consumeEventStream(stream, onEvent) {
+            const reader = stream.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+                let boundary = buffer.indexOf('\n\n');
+                while (boundary !== -1) {
+                    const rawEvent = buffer.slice(0, boundary);
+                    buffer = buffer.slice(boundary + 2);
+                    parseEvent(rawEvent, onEvent);
+                    boundary = buffer.indexOf('\n\n');
+                }
+
+                if (done) {
+                    if (buffer.trim()) {
+                        parseEvent(buffer, onEvent);
+                    }
+                    break;
+                }
+            }
+        }
+
+        function parseEvent(rawEvent, onEvent) {
+            const lines = rawEvent.split('\n');
+            let eventName = 'message';
+            const dataLines = [];
+
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventName = line.slice(6).trim();
+                }
+                if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trim());
+                }
+            }
+
+            if (!dataLines.length) {
+                return;
+            }
+
+            onEvent(eventName, JSON.parse(dataLines.join('\n')));
+        }
+    })();
+</script>
 </body>
 </html>
