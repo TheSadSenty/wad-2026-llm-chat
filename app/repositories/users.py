@@ -1,24 +1,24 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 
 
-def get_user_by_login(session: Session, login: str) -> User | None:
+async def get_user_by_login(session: AsyncSession, login: str) -> User | None:
     """Fetch a user by login."""
     statement = select(User).where(User.login == login)
-    return session.execute(statement).scalar_one_or_none()
+    return (await session.execute(statement)).scalar_one_or_none()
 
 
-def get_user_by_id(session: Session, user_id: int) -> User | None:
+async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     """Fetch a user by primary key."""
-    return session.get(User, user_id)
+    return await session.get(User, user_id)
 
 
-def create_user(session: Session, *, login: str, password_hash: str) -> User:
+async def create_user(session: AsyncSession, *, login: str, password_hash: str) -> User:
     """Persist a new user."""
     user = User(login=login, password_hash=password_hash)
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    await session.commit()
+    await session.refresh(user)
     return user

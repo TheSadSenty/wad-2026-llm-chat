@@ -4,15 +4,15 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
 from app.services.auth import (
     AUTH_COOKIE_NAME,
     InvalidCredentialsError,
     RegistrationConflictError,
-    authenticate_user,
-    register_user,
+    authenticate_user_async,
+    register_user_async,
 )
 
 auth_router = APIRouter(tags=['auth'])
@@ -79,11 +79,11 @@ async def registration_form(request: Request) -> HTMLResponse:
 async def register(
     request: Request,
     data: Annotated[RegistrationForm, Form()],
-    session: Annotated[Session, Depends(get_db_session)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> HTMLResponse:
     """Register a new user account."""
     try:
-        created_user = register_user(
+        created_user = await register_user_async(
             session=session,
             login=str(data.login),
             password=data.password,
@@ -118,11 +118,11 @@ async def login_form(request: Request) -> HTMLResponse:
 async def login(
     request: Request,
     data: Annotated[LoginForm, Form()],
-    session: Annotated[Session, Depends(get_db_session)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> HTMLResponse | RedirectResponse:
     """Authenticate a user and start a browser session."""
     try:
-        user = authenticate_user(
+        user = await authenticate_user_async(
             session=session,
             login=str(data.login),
             password=data.password,

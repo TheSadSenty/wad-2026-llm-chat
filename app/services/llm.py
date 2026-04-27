@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator, Iterator
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
@@ -20,16 +21,48 @@ class LocalLlmService:
         self._model = self._load_model(gguf_path)
         self._generation_lock = Lock()
 
-    def generate_reply(self, *, messages: list[Message]) -> str:
+    async def generate_reply(self, *, messages: list[Message]) -> str:
+        """Generate the next assistant reply without blocking the event loop."""
+        return await asyncio.to_thread(self._generate_reply_sync, messages)
+
+    async def stream_reply(self, *, messages: list[Message]) -> AsyncIterator[str]:
+        """Yield the next assistant reply token by token without blocking the event loop."""
+        queue: asyncio.Queue[str | Exception | object] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        sentinel = object()
+
+        def _producer() -> None:
+            try:
+                for token in self._stream_reply_sync(messages=messages):
+                    loop.call_soon_threadsafe(queue.put_nowait, token)
+            except Exception as error:
+                loop.call_soon_threadsafe(queue.put_nowait, error)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+        producer_task = asyncio.create_task(asyncio.to_thread(_producer))
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+
+                yield item
+        finally:
+            await producer_task
+
+    def _generate_reply_sync(self, messages: list[Message]) -> str:
         """Generate the next assistant reply for the conversation."""
-        reply = ''.join(self.stream_reply(messages=messages)).strip()
+        reply = ''.join(self._stream_reply_sync(messages=messages)).strip()
         if reply:
             return reply
 
         msg = 'The local model returned an empty response.'
         raise RuntimeError(msg)
 
-    def stream_reply(self, *, messages: list[Message]) -> Iterator[str]:
+    def _stream_reply_sync(self, *, messages: list[Message]) -> Iterator[str]:
         """Yield the next assistant reply token by token."""
         prompt_text = self._build_prompt(messages=messages)
         try:

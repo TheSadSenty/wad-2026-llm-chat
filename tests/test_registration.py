@@ -1,10 +1,10 @@
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.__main__ import create_app
@@ -15,31 +15,38 @@ from app.services.security import verify_password
 
 
 @pytest.fixture()
-def client() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
-    engine = create_engine(
-        'sqlite://',
+def client() -> Iterator[tuple[TestClient, async_sessionmaker[AsyncSession]]]:
+    engine = create_async_engine(
+        'sqlite+aiosqlite://',
         connect_args={'check_same_thread': False},
         poolclass=StaticPool,
     )
-    testing_session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    Base.metadata.create_all(bind=engine)
+    testing_session_factory = async_sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    async def prepare_database() -> None:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+
+    asyncio.run(prepare_database())
 
     application = create_app(init_database=False)
 
-    def override_session() -> Iterator[Session]:
-        session = testing_session_factory()
-        try:
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        async with testing_session_factory() as session:
             yield session
-        finally:
-            session.close()
 
     application.dependency_overrides[get_db_session] = override_session
 
     with TestClient(application) as test_client:
         yield test_client, testing_session_factory
 
+    async def dispose_engine() -> None:
+        await engine.dispose()
 
-def test_registration_form_is_available(client: tuple[TestClient, sessionmaker[Session]]) -> None:
+    asyncio.run(dispose_engine())
+
+
+def test_registration_form_is_available(client: tuple[TestClient, async_sessionmaker[AsyncSession]]) -> None:
     test_client, _ = client
     response = test_client.get('/register')
 
@@ -47,7 +54,7 @@ def test_registration_form_is_available(client: tuple[TestClient, sessionmaker[S
     assert 'Create account' in response.text
 
 
-def test_user_can_register(client: tuple[TestClient, sessionmaker[Session]]) -> None:
+def test_user_can_register(client: tuple[TestClient, async_sessionmaker[AsyncSession]]) -> None:
     test_client, session_factory = client
     response = test_client.post(
         '/register',
@@ -60,14 +67,17 @@ def test_user_can_register(client: tuple[TestClient, sessionmaker[Session]]) -> 
     assert response.status_code == 201
     assert 'registered successfully' in response.text
 
-    with session_factory() as session:
-        stored_user = session.query(User).filter_by(login='user@example.com').one()
+    async def fetch_user() -> User:
+        async with session_factory() as session:
+            return (await session.execute(select(User).filter_by(login='user@example.com'))).scalar_one()
+
+    stored_user = asyncio.run(fetch_user())
 
     assert stored_user.password_hash != 'correct-horse-battery-staple'
     assert verify_password('correct-horse-battery-staple', stored_user.password_hash)
 
 
-def test_duplicate_email_is_rejected(client: tuple[TestClient, sessionmaker[Session]]) -> None:
+def test_duplicate_email_is_rejected(client: tuple[TestClient, async_sessionmaker[AsyncSession]]) -> None:
     test_client, _ = client
     first_response = test_client.post(
         '/register',
