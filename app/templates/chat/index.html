@@ -214,7 +214,7 @@
         <section class="panel">
             <div class="panel-inner">
                 <h2>Start new chat</h2>
-                <p class="meta">The assistant is mocked for now, but messages are stored.</p>
+                <p class="meta">Messages are persisted and answered by a local GGUF-backed model.</p>
                 <form method="post" action="/chats">
                     <textarea name="prompt" placeholder="Ask something to start a new thread." required>{{ prompt }}</textarea>
                     <button type="submit">Create chat</button>
@@ -240,7 +240,7 @@
     <main>
         <div class="topbar">
             <div>
-                <p class="eyebrow">Mock LLM chat</p>
+                <p class="eyebrow">Local GGUF chat</p>
                 <h2>{% if selected_chat %}{{ selected_chat.title }}{% else %}New conversation{% endif %}</h2>
             </div>
         </div>
@@ -262,7 +262,7 @@
                 </div>
 
                 <form method="post" action="/chats/{{ selected_chat.id }}/messages" style="margin-top: 20px;">
-                    <textarea name="prompt" placeholder="Continue the conversation." required></textarea>
+                    <textarea name="prompt" placeholder="Continue the conversation." required>{{ prompt }}</textarea>
                     <button type="submit">Send</button>
                 </form>
                 {% else %}

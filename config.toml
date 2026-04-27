@@ -8,3 +8,6 @@ port = 5432
 dbname = 'llm-chat'
 user = 'postgres'
 password = 'changethis'
+
+[llm]
+gguf_path = './qwen.gguf'

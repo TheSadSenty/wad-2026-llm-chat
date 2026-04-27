@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel
@@ -41,11 +42,18 @@ class DatabaseConfig(BaseModel):
     postgres: PostgresConfig
 
 
+class LlmConfig(BaseModel):
+    """Local LLM configuration."""
+
+    gguf_path: Path
+
+
 class Config(BaseSettings):
     """Runtime configuration."""
 
     app: AppConfig
     database: DatabaseConfig
+    llm: LlmConfig
 
     model_config = SettingsConfigDict(
         env_prefix='LLM_CHAT_',

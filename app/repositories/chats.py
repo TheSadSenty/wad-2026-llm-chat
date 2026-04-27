@@ -1,21 +1,28 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.chat import Chat
+from app.models.csat import Chat
 from app.models.message import Message
 
 
 def list_chats_for_user(session: Session, *, user_id: int) -> list[Chat]:
     """Return all chats owned by a user, newest first."""
     statement = (
-        select(Chat).options(selectinload(Chat.messages)).where(Chat.user_id == user_id).order_by(Chat.id.desc())
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.user_id == user_id)
+        .order_by(Chat.id.desc())
     )
     return list(session.scalars(statement))
 
 
 def get_chat_for_user(session: Session, *, chat_id: int, user_id: int) -> Chat | None:
     """Return a chat only if it belongs to the given user."""
-    statement = select(Chat).options(selectinload(Chat.messages)).where(Chat.id == chat_id, Chat.user_id == user_id)
+    statement = (
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.id == chat_id, Chat.user_id == user_id)
+    )
     return session.execute(statement).scalar_one_or_none()
 
 

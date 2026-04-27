@@ -7,11 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db_session
-from app.models.chat import Chat
+from app.models.csat import Chat
 from app.models.user import User
 from app.repositories.users import get_user_by_id
 from app.services.auth import AUTH_COOKIE_NAME
-from app.services.chat import append_mock_reply, create_chat_with_mock_reply, get_user_chat, list_user_chats
+from app.services.chat import append_llm_reply, create_chat_with_llm_reply, get_user_chat, list_user_chats
 
 chat_router = APIRouter(tags=['chat'])
 templates = Jinja2Templates(directory='app/templates')
@@ -121,7 +121,20 @@ async def create_chat(
             status_code=422,
         )
 
-    chat = create_chat_with_mock_reply(session=session, user=current_user, prompt=prompt)
+    try:
+        chat = create_chat_with_llm_reply(session=session, user=current_user, prompt=prompt)
+    except RuntimeError as error:
+        chats = list_user_chats(session=session, user=current_user)
+        return _render_chat_page(
+            request,
+            user=current_user,
+            chats=chats,
+            selected_chat=chats[0] if chats else None,
+            error_message=str(error),
+            prompt=prompt,
+            status_code=503,
+        )
+
     return RedirectResponse(url=f'/chats?chat_id={chat.id}', status_code=303)
 
 
@@ -154,5 +167,19 @@ async def send_message(
             status_code=422,
         )
 
-    append_mock_reply(session=session, chat=chat, prompt=prompt)
+    try:
+        append_llm_reply(session=session, chat=chat, prompt=prompt)
+    except RuntimeError as error:
+        chats = list_user_chats(session=session, user=current_user)
+        selected_chat = get_user_chat(session=session, user=current_user, chat_id=chat_id)
+        return _render_chat_page(
+            request,
+            user=current_user,
+            chats=chats,
+            selected_chat=selected_chat,
+            error_message=str(error),
+            prompt=prompt,
+            status_code=503,
+        )
+
     return RedirectResponse(url=f'/chats?chat_id={chat_id}', status_code=303)
