@@ -6,27 +6,22 @@ from app.controllers.auth import auth_router
 from app.controllers.chat import chat_router
 
 
-def create_app(*, init_database: bool = True) -> FastAPI:
-    """Create and configure the FastAPI application."""
-    del init_database
-    application = FastAPI(title='wad-2026-llm-chat')
+def create_app() -> FastAPI:
+    application = FastAPI(title='WAD 2026 LLM Chat')
     application.include_router(auth_router)
     application.include_router(chat_router)
     return application
 
 
-def main(host: str | None = None, port: int | None = None, *, init_database: bool = True) -> None:
-    """Run the application with Uvicorn."""
+def main() -> None:
     settings = get_settings()
-    application = create_app(init_database=init_database)
+    application = create_app()
     uvicorn.run(
         application,
-        host=host or settings.app.host,
-        port=port or settings.app.port,
-        reload=False,
+        host=settings.app.host,
+        port=settings.app.port,
     )
 
 
 if __name__ == '__main__':
-    settings = get_settings()
-    main(host=settings.app.host, port=settings.app.port)
+    main()
