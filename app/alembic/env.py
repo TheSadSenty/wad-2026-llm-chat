@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.config import get_settings
-from app.models import User
+from app.models import Chat, Message, User
 from app.models.base import Base
 
 # this is the Alembic Config object, which provides
@@ -24,6 +24,8 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # Importing models here ensures SQLAlchemy registers table metadata
 # before Alembic autogenerate inspects it.
+del Chat
+del Message
 del User
 target_metadata = Base.metadata
 

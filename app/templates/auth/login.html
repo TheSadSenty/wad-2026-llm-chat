@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register</title>
+    <title>Login</title>
     <style>
         :root {
             color-scheme: light;
@@ -11,10 +11,9 @@
             --panel: rgba(255, 251, 245, 0.92);
             --text: #1f1a17;
             --muted: #6c5f56;
-            --accent: #b84c2a;
-            --accent-dark: #8f3113;
+            --accent: #196347;
+            --accent-dark: #0f4934;
             --error: #9f1d35;
-            --success: #196347;
             --border: rgba(31, 26, 23, 0.12);
         }
 
@@ -29,9 +28,9 @@
             place-items: center;
             padding: 24px;
             background:
-                radial-gradient(circle at top left, rgba(184, 76, 42, 0.22), transparent 28rem),
-                radial-gradient(circle at bottom right, rgba(25, 99, 71, 0.18), transparent 30rem),
-                linear-gradient(135deg, #f7f1e8, #efe4d4);
+                radial-gradient(circle at top right, rgba(25, 99, 71, 0.24), transparent 28rem),
+                radial-gradient(circle at bottom left, rgba(184, 76, 42, 0.18), transparent 32rem),
+                linear-gradient(145deg, #f6efe4, #eadfce);
             color: var(--text);
             font-family: Georgia, 'Times New Roman', serif;
         }
@@ -77,30 +76,35 @@
             font: inherit;
         }
 
-        button {
-            border: 0;
+        button,
+        a.link {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
             border-radius: 999px;
             padding: 14px 18px;
+            font: inherit;
+            text-decoration: none;
+        }
+
+        button {
+            border: 0;
             background: linear-gradient(135deg, var(--accent), var(--accent-dark));
             color: #fff;
-            font: inherit;
             cursor: pointer;
+        }
+
+        a.link {
+            border: 1px solid var(--border);
+            color: var(--text);
         }
 
         .message {
             margin-bottom: 16px;
             padding: 12px 14px;
             border-radius: 14px;
-        }
-
-        .message.error {
             background: rgba(159, 29, 53, 0.08);
             color: var(--error);
-        }
-
-        .message.success {
-            background: rgba(25, 99, 71, 0.09);
-            color: var(--success);
         }
 
         .actions {
@@ -108,46 +112,31 @@
             gap: 12px;
             margin-top: 20px;
         }
-
-        .link {
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            padding: 14px 18px;
-            color: var(--text);
-            text-decoration: none;
-        }
     </style>
 </head>
 <body>
 <main>
-    <h1>Create account</h1>
-    <p>Register with a unique email address and password.</p>
+    <h1>Welcome back</h1>
+    <p>Sign in to continue chatting with the mocked assistant.</p>
 
     {% if error_message %}
-    <div class="message error">{{ error_message }}</div>
+    <div class="message">{{ error_message }}</div>
     {% endif %}
 
-    {% if success_message %}
-    <div class="message success">{{ success_message }}</div>
-    {% endif %}
-
-    <form method="post" action="/register">
+    <form method="post" action="/login">
         <label>
             Email
             <input type="email" name="login" value="{{ login }}" required autocomplete="email">
         </label>
         <label>
             Password
-            <input type="password" name="password" required autocomplete="new-password">
+            <input type="password" name="password" required autocomplete="current-password">
         </label>
-        <button type="submit">Register</button>
+        <button type="submit">Login</button>
     </form>
 
     <div class="actions">
-        <a class="link" href="/login">Already registered? Log in</a>
+        <a class="link" href="/register">Create a new account</a>
     </div>
 </main>
 </body>

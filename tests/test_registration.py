@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.__main__ import create_app
 from app.db import get_db_session
-from app.main import create_app
 from app.models.base import Base
 from app.models.user import User
 from app.services.security import verify_password

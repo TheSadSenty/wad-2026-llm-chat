@@ -10,6 +10,11 @@ def get_user_by_login(session: Session, login: str) -> User | None:
     return session.execute(statement).scalar_one_or_none()
 
 
+def get_user_by_id(session: Session, user_id: int) -> User | None:
+    """Fetch a user by primary key."""
+    return session.get(User, user_id)
+
+
 def create_user(session: Session, *, login: str, password_hash: str) -> User:
     """Persist a new user."""
     user = User(login=login, password_hash=password_hash)

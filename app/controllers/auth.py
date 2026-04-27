@@ -1,13 +1,19 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.db import get_db_session
-from app.services.auth import RegistrationConflictError, register_user
+from app.services.auth import (
+    AUTH_COOKIE_NAME,
+    InvalidCredentialsError,
+    RegistrationConflictError,
+    authenticate_user,
+    register_user,
+)
 
 auth_router = APIRouter(tags=['auth'])
 templates = Jinja2Templates(directory='app/templates')
@@ -15,6 +21,13 @@ templates = Jinja2Templates(directory='app/templates')
 
 class RegistrationForm(BaseModel):
     """Registration payload parsed from the form body."""
+
+    login: EmailStr
+    password: str
+
+
+class LoginForm(BaseModel):
+    """Login payload parsed from the form body."""
 
     login: EmailStr
     password: str
@@ -30,6 +43,24 @@ def _render_registration_page(
     return templates.TemplateResponse(
         request=request,
         name='auth/register.html',
+        context={
+            'error_message': error_message,
+            'login': login,
+        },
+        status_code=status_code,
+    )
+
+
+def _render_login_page(
+    request: Request,
+    *,
+    error_message: str | None = None,
+    login: str = '',
+    status_code: int = 200,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name='auth/login.html',
         context={
             'error_message': error_message,
             'login': login,
@@ -75,3 +106,48 @@ async def register(
         },
         status_code=201,
     )
+
+
+@auth_router.get('/login', response_class=HTMLResponse)
+async def login_form(request: Request) -> HTMLResponse:
+    """Render the login form."""
+    return _render_login_page(request)
+
+
+@auth_router.post('/login', response_model=None)
+async def login(
+    request: Request,
+    data: Annotated[LoginForm, Form()],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> HTMLResponse | RedirectResponse:
+    """Authenticate a user and start a browser session."""
+    try:
+        user = authenticate_user(
+            session=session,
+            login=str(data.login),
+            password=data.password,
+        )
+    except InvalidCredentialsError:
+        return _render_login_page(
+            request,
+            error_message='Invalid email or password.',
+            login=str(data.login),
+            status_code=401,
+        )
+
+    response = RedirectResponse(url='/chats', status_code=303)
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=str(user.id),
+        httponly=True,
+        samesite='lax',
+    )
+    return response
+
+
+@auth_router.post('/logout', response_model=None)
+async def logout() -> RedirectResponse:
+    """Clear the browser session."""
+    response = RedirectResponse(url='/login', status_code=303)
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return response
