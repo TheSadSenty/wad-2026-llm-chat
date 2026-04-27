@@ -5,10 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
+from app.forms import ChatPromptForm
 from app.models.csat import Chat
 from app.models.user import User
 from app.services.auth import AUTH_COOKIE_NAME, get_user_by_id
@@ -25,12 +25,6 @@ from app.services.llm import get_llm_service
 
 chat_router = APIRouter(tags=['chat'])
 templates = Jinja2Templates(directory='app/templates')
-
-
-class ChatPromptForm(BaseModel):
-    """User prompt submitted from the chat form."""
-
-    prompt: str
 
 
 def _sse_event(event: str, data: dict[str, object]) -> str:
