@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
+from llama_cpp import Llama
+
 from app.config import get_settings
 
 if TYPE_CHECKING:
@@ -23,7 +25,7 @@ class LocalLlmService:
 
     async def generate_reply(self, *, messages: list[Message]) -> str:
         """Generate the next assistant reply without blocking the event loop."""
-        return await asyncio.to_thread(self._generate_reply_sync, messages)
+        return await asyncio.to_thread(self._generate_reply, messages)
 
     async def stream_reply(self, *, messages: list[Message]) -> AsyncIterator[str]:
         """Yield the next assistant reply token by token without blocking the event loop."""
@@ -33,7 +35,7 @@ class LocalLlmService:
 
         def _producer() -> None:
             try:
-                for token in self._stream_reply_sync(messages=messages):
+                for token in self._stream_reply(messages=messages):
                     loop.call_soon_threadsafe(queue.put_nowait, token)
             except Exception as error:
                 loop.call_soon_threadsafe(queue.put_nowait, error)
@@ -53,16 +55,16 @@ class LocalLlmService:
         finally:
             await producer_task
 
-    def _generate_reply_sync(self, messages: list[Message]) -> str:
+    def _generate_reply(self, messages: list[Message]) -> str:
         """Generate the next assistant reply for the conversation."""
-        reply = ''.join(self._stream_reply_sync(messages=messages)).strip()
+        reply = ''.join(self._stream_reply(messages=messages)).strip()
         if reply:
             return reply
 
         msg = 'The local model returned an empty response.'
         raise RuntimeError(msg)
 
-    def _stream_reply_sync(self, *, messages: list[Message]) -> Iterator[str]:
+    def _stream_reply(self, *, messages: list[Message]) -> Iterator[str]:
         """Yield the next assistant reply token by token."""
         prompt_text = self._build_prompt(messages=messages)
         try:
@@ -88,15 +90,6 @@ class LocalLlmService:
             raise RuntimeError(msg)
 
         try:
-            from llama_cpp import Llama
-        except ImportError as error:
-            msg = (
-                'The `llama-cpp-python` package is required for GGUF chat generation, '
-                'but it is not installed in the current environment.'
-            )
-            raise RuntimeError(msg) from error
-
-        try:
             return Llama(model_path=str(gguf_path), verbose=False)
         except Exception as error:
             msg = f'Failed to load the local GGUF model from {gguf_path}: {error}'
@@ -106,8 +99,7 @@ class LocalLlmService:
         history_lines = [
             'System: You are a helpful assistant. Answer clearly and concisely.',
         ]
-        for message in messages:
-            history_lines.append(f'{self._role_name(message.role)}: {message.content.strip()}')
+        history_lines.extend(f'{self._role_name(message.role)}: {message.content.strip()}' for message in messages)
 
         history_lines.append('Assistant:')
         return '\n\n'.join(history_lines)
