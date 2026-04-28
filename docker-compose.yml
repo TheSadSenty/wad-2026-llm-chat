@@ -26,10 +26,13 @@ services:
         restart: true
       prestart:
         condition: service_completed_successfully
+      redis:
+        condition: service_started
     environment:
       LLM_CHAT_APP__HOST: 0.0.0.0
       LLM_CHAT_APP__PORT: 8000
       LLM_CHAT_DATABASE__POSTGRES__HOST: db
+      LLM_CHAT_REDIS__HOST: redis
     ports:
       - '8000:8000'
     restart: unless-stopped
@@ -58,6 +61,14 @@ services:
       - POSTGRES_DB=${LLM_CHAT_DATABASE__POSTGRES__DBNAME}
       - POSTGRES_PASSWORD=${LLM_CHAT_DATABASE__POSTGRES__PASSWORD}
       - POSTGRES_USER=${LLM_CHAT_DATABASE__POSTGRES__USER}
+
+  redis:
+    image: redis:8-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    networks:
+      - app_network
 
 volumes:
   postgres_data:

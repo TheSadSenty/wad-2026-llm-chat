@@ -2,14 +2,17 @@ import asyncio
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 from urllib.parse import urlencode
 
 import aiohttp
 import jwt
-from fastapi import Request
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import GithubAuthConfig, get_settings
+from app.db import get_db_session
 from app.models.user import User
 from app.repositories.users import (
     create_user,
@@ -18,16 +21,17 @@ from app.repositories.users import (
     update_user_github_identity,
 )
 from app.repositories.users import get_user_by_id as get_user_by_id_query
+from app.services.redis import redis_client
 from app.services.security import (
     JWT_ALGORITHM,
     JwtDecodeError,
     create_access_token,
     decode_access_token,
     hash_password,
+    make_refresh_token,
     verify_password,
 )
 
-AUTH_COOKIE_NAME = 'llm_chat_access_token'
 GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'  # noqa: S105
 GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 GITHUB_EMAILS_URL = 'https://api.github.com/user/emails'
@@ -36,6 +40,9 @@ GITHUB_OAUTH_STATE_TOKEN_TYPE = 'github_oauth_state'  # noqa: S105
 GITHUB_OAUTH_STATE_TTL_MINUTES = 10
 GITHUB_OAUTH_SCOPE = 'user:email'
 GITHUB_HTTP_TIMEOUT_SECONDS = 10
+REFRESH_TOKEN_PREFIX = 'refresh:'
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/auth/login')
+oauth2_optional_scheme = OAuth2PasswordBearer(tokenUrl='/api/auth/login', auto_error=False)
 
 
 class RegistrationConflictError(Exception):
@@ -74,26 +81,6 @@ class GithubIdentity:
     email: str
 
 
-def get_current_user_from_request(request: Request) -> User | None:
-    """Return the authenticated user attached by auth middleware."""
-    current_user = getattr(request.state, 'current_user', None)
-    if current_user is None or not isinstance(current_user, User):
-        return None
-
-    return current_user
-
-
-def get_access_token_from_request(request: Request) -> str | None:
-    """Read the access token from the Authorization header or auth cookie."""
-    authorization = request.headers.get('Authorization')
-    if authorization is not None:
-        scheme, _, token = authorization.partition(' ')
-        if scheme.lower() == 'bearer' and token:
-            return token
-
-    return request.cookies.get(AUTH_COOKIE_NAME)
-
-
 async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     """Fetch a user by primary key."""
     return await get_user_by_id_query(session, user_id)
@@ -123,6 +110,36 @@ async def authenticate_user(*, session: AsyncSession, login: str, password: str)
 def create_user_access_token(user: User) -> str:
     """Create a JWT access token for a user."""
     return create_access_token(user_id=user.id)
+
+
+async def issue_tokens(user: User) -> dict[str, str]:
+    """Create an access token and a persisted refresh session."""
+    refresh_token = make_refresh_token()
+    await _save_refresh_session(user_id=user.id, refresh_token=refresh_token)
+    return {
+        'access_token': create_user_access_token(user),
+        'refresh_token': refresh_token,
+        'token_type': 'bearer',
+    }
+
+
+async def refresh_tokens(*, session: AsyncSession, refresh_token: str) -> dict[str, str]:
+    """Rotate a refresh token and issue a fresh token pair."""
+    user_id = await redis_client.get(_refresh_session_key(refresh_token))
+    if user_id is None or not user_id.isdigit():
+        raise InvalidCredentialsError
+
+    await redis_client.delete(_refresh_session_key(refresh_token))
+    user = await get_user_by_id(session, int(user_id))
+    if user is None:
+        raise InvalidCredentialsError
+
+    return await issue_tokens(user)
+
+
+async def logout(refresh_token: str) -> None:
+    """Delete a refresh session."""
+    await redis_client.delete(_refresh_session_key(refresh_token))
 
 
 def get_github_authorization_url(*, redirect_uri: str) -> str:
@@ -184,6 +201,33 @@ async def get_user_from_access_token(session: AsyncSession, token: str) -> User 
     return await get_user_by_id(session, user_id)
 
 
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> User:
+    """Resolve the authenticated user from a bearer token."""
+    user = await get_user_from_access_token(session, token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid authentication credentials.',
+            headers={'WWW-Authenticate': 'Bearer'},
+        )
+
+    return user
+
+
+async def get_optional_current_user(
+    token: Annotated[str | None, Depends(oauth2_optional_scheme)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> User | None:
+    """Resolve the authenticated user from a bearer token when provided."""
+    if token is None:
+        return None
+
+    return await get_user_from_access_token(session, token)
+
+
 async def authenticate_with_github(
     *,
     session: AsyncSession,
@@ -241,6 +285,16 @@ async def authenticate_with_github(
 def _generate_unusable_password_hash() -> str:
     """Create a random password hash for accounts created via OAuth."""
     return hash_password(secrets.token_urlsafe(48))
+
+
+def _refresh_session_key(refresh_token: str) -> str:
+    return f'{REFRESH_TOKEN_PREFIX}{refresh_token}'
+
+
+async def _save_refresh_session(*, user_id: int, refresh_token: str) -> None:
+    settings = get_settings()
+    ttl_seconds = settings.auth.refresh_token_ttl_days * 24 * 60 * 60
+    await redis_client.setex(_refresh_session_key(refresh_token), ttl_seconds, str(user_id))
 
 
 async def _exchange_github_code_for_access_token(

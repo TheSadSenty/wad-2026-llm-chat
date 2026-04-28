@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,7 @@ from app.db import get_db_session
 from app.forms import ChatPromptForm
 from app.models.csat import Chat
 from app.models.user import User
-from app.services.auth import get_current_user_from_request
+from app.services.auth import get_current_user, get_optional_current_user
 from app.services.chat import (
     append_llm_reply,
     append_user_message,
@@ -44,14 +44,10 @@ def _streaming_response(event_stream: AsyncIterator[str] | Iterator[str]) -> Str
     )
 
 
-def _redirect_to_login() -> RedirectResponse:
-    return RedirectResponse(url='/login', status_code=303)
-
-
 def _render_chat_page(
     request: Request,
     *,
-    user: User,
+    user: User | None,
     chats: list[Chat],
     selected_chat: Chat | None,
     error_message: str | None = None,
@@ -73,14 +69,8 @@ def _render_chat_page(
 
 
 @chat_router.get('/', include_in_schema=False, response_model=None)
-async def index(
-    request: Request,
-) -> RedirectResponse:
+async def index() -> RedirectResponse:
     """Redirect the visitor to the correct entry page."""
-    current_user = get_current_user_from_request(request)
-    if current_user is None:
-        return RedirectResponse(url='/register', status_code=303)
-
     return RedirectResponse(url='/chats', status_code=303)
 
 
@@ -88,12 +78,17 @@ async def index(
 async def chat_index(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    current_user: Annotated[User | None, Depends(get_optional_current_user)],
     chat_id: int | None = None,
-) -> HTMLResponse | RedirectResponse:
+) -> HTMLResponse:
     """Render the chat workspace for the current user."""
-    current_user = get_current_user_from_request(request)
     if current_user is None:
-        return _redirect_to_login()
+        return _render_chat_page(
+            request,
+            user=None,
+            chats=[],
+            selected_chat=None,
+        )
 
     chats = await list_user_chats(session=session, user_id=current_user.id)
     selected_chat = chats[0] if chats else None
@@ -115,12 +110,9 @@ async def create_chat(
     request: Request,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> RedirectResponse | HTMLResponse:
     """Create a new chat from the first user prompt."""
-    current_user = get_current_user_from_request(request)
-    if current_user is None:
-        return _redirect_to_login()
-
     prompt = data.prompt.strip()
     if not prompt:
         chats = await list_user_chats(session=session, user_id=current_user.id)
@@ -156,12 +148,9 @@ async def send_message(
     chat_id: int,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> RedirectResponse | HTMLResponse:
     """Append a new message to an existing chat."""
-    current_user = get_current_user_from_request(request)
-    if current_user is None:
-        return _redirect_to_login()
-
     chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail='Chat not found.')
@@ -202,12 +191,9 @@ async def create_chat_stream(
     request: Request,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> StreamingResponse | PlainTextResponse | RedirectResponse:
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
     """Create a chat and stream the assistant response incrementally."""
-    current_user = get_current_user_from_request(request)
-    if current_user is None:
-        return _redirect_to_login()
-
     prompt = data.prompt.strip()
     if not prompt:
         return PlainTextResponse('Message cannot be empty.', status_code=422)
@@ -268,12 +254,9 @@ async def send_message_stream(
     chat_id: int,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> StreamingResponse | PlainTextResponse | RedirectResponse:
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> StreamingResponse | PlainTextResponse:
     """Append a user message and stream the assistant response incrementally."""
-    current_user = get_current_user_from_request(request)
-    if current_user is None:
-        return _redirect_to_login()
-
     chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
     if chat is None:
         return PlainTextResponse('Chat not found.', status_code=404)

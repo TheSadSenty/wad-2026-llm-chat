@@ -59,7 +59,17 @@ class AuthConfig(BaseModel):
 
     jwt_secret: str
     access_token_ttl_minutes: int
+    refresh_token_ttl_days: int
     github: GithubAuthConfig | None = None
+
+
+class RedisConfig(BaseModel):
+    """Redis connection settings."""
+
+    host: str
+    port: int
+    db: int
+    password: str | None = None
 
 
 class Config(BaseSettings):
@@ -69,6 +79,7 @@ class Config(BaseSettings):
     auth: AuthConfig
     database: DatabaseConfig
     llm: LlmConfig
+    redis: RedisConfig
 
     model_config = SettingsConfigDict(
         env_prefix='LLM_CHAT_',

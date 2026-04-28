@@ -140,14 +140,18 @@
     <p>Register with a unique email address and password.</p>
 
     {% if error_message %}
-    <div class="message error">{{ error_message }}</div>
+    <div class="message error" id="auth-error">{{ error_message }}</div>
+    {% else %}
+    <div class="message error" id="auth-error" hidden></div>
     {% endif %}
 
     {% if success_message %}
-    <div class="message success">{{ success_message }}</div>
+    <div class="message success" id="auth-success">{{ success_message }}</div>
+    {% else %}
+    <div class="message success" id="auth-success" hidden></div>
     {% endif %}
 
-    <form method="post" action="/register">
+    <form id="register-form" method="post" action="/api/auth/register">
         <label>
             Email
             <input type="email" name="login" value="{{ login }}" required autocomplete="email">
@@ -161,10 +165,85 @@
 
     <div class="actions">
         {% if github_oauth_enabled %}
-        <a class="oauth-link" href="/auth/github">Sign up with GitHub</a>
+        <a class="oauth-link" href="/api/auth/github/login">Sign up with GitHub</a>
         {% endif %}
         <a class="link" href="/login">Already registered? Log in</a>
     </div>
 </main>
+<script>
+    (() => {
+        const registerForm = document.getElementById('register-form');
+        const errorNode = document.getElementById('auth-error');
+        const successNode = document.getElementById('auth-success');
+        const accessTokenKey = 'llm_chat.access_token';
+        const refreshTokenKey = 'llm_chat.refresh_token';
+
+        if (hasStoredTokens()) {
+            window.location.replace('/chats');
+        }
+
+        registerForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            void submitRegistration();
+        });
+
+        async function submitRegistration() {
+            const submitButton = registerForm.querySelector('button[type="submit"]');
+            const formData = new FormData(registerForm);
+            const payload = {
+                login: String(formData.get('login') || '').trim(),
+                password: String(formData.get('password') || ''),
+            };
+
+            hideMessages();
+            submitButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const body = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(String(body.detail || 'Registration failed.'));
+                }
+
+                storeTokens(body);
+                successNode.textContent = 'Account created. Redirecting to chats...';
+                successNode.hidden = false;
+                window.location.replace('/chats');
+            } catch (error) {
+                errorNode.textContent = String(error.message || error);
+                errorNode.hidden = false;
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        function hasStoredTokens() {
+            return Boolean(localStorage.getItem(accessTokenKey) || localStorage.getItem(refreshTokenKey));
+        }
+
+        function storeTokens(tokens) {
+            if (tokens.access_token) {
+                localStorage.setItem(accessTokenKey, tokens.access_token);
+            }
+            if (tokens.refresh_token) {
+                localStorage.setItem(refreshTokenKey, tokens.refresh_token);
+            }
+        }
+
+        function hideMessages() {
+            errorNode.textContent = '';
+            errorNode.hidden = true;
+            successNode.textContent = '';
+            successNode.hidden = true;
+        }
+    })();
+</script>
 </body>
 </html>

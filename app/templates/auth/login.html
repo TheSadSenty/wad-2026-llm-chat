@@ -147,10 +147,12 @@
     <p>Sign in to continue chatting with the local assistant.</p>
 
     {% if error_message %}
-    <div class="message">{{ error_message }}</div>
+    <div class="message" id="auth-message">{{ error_message }}</div>
+    {% else %}
+    <div class="message" id="auth-message" hidden></div>
     {% endif %}
 
-    <form method="post" action="/login">
+    <form id="login-form" method="post" action="/api/auth/login">
         <label>
             Email
             <input type="email" name="login" value="{{ login }}" required autocomplete="email">
@@ -165,10 +167,100 @@
     <div class="actions">
         {% if github_oauth_enabled %}
         <div class="divider">or</div>
-        <a class="oauth-link" href="/auth/github">Continue with GitHub</a>
+        <a class="oauth-link" href="/api/auth/github/login">Continue with GitHub</a>
         {% endif %}
         <a class="link" href="/register">Create a new account</a>
     </div>
 </main>
+<script>
+    (() => {
+        const loginForm = document.getElementById('login-form');
+        const messageNode = document.getElementById('auth-message');
+        const accessTokenKey = 'llm_chat.access_token';
+        const refreshTokenKey = 'llm_chat.refresh_token';
+
+        captureTokensFromQuery();
+        if (hasStoredTokens()) {
+            window.location.replace('/chats');
+        }
+
+        loginForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            void submitLogin();
+        });
+
+        async function submitLogin() {
+            const submitButton = loginForm.querySelector('button[type="submit"]');
+            const formData = new FormData(loginForm);
+            const payload = {
+                login: String(formData.get('login') || '').trim(),
+                password: String(formData.get('password') || ''),
+            };
+
+            hideMessage();
+            submitButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const body = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(String(body.detail || 'Login failed.'));
+                }
+
+                storeTokens(body);
+                window.location.replace('/chats');
+            } catch (error) {
+                showMessage(String(error.message || error));
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        function captureTokensFromQuery() {
+            const params = new URLSearchParams(window.location.search);
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            if (!accessToken || !refreshToken) {
+                return;
+            }
+
+            storeTokens({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            });
+            window.location.replace('/chats');
+        }
+
+        function hasStoredTokens() {
+            return Boolean(localStorage.getItem(accessTokenKey) || localStorage.getItem(refreshTokenKey));
+        }
+
+        function storeTokens(tokens) {
+            if (tokens.access_token) {
+                localStorage.setItem(accessTokenKey, tokens.access_token);
+            }
+            if (tokens.refresh_token) {
+                localStorage.setItem(refreshTokenKey, tokens.refresh_token);
+            }
+        }
+
+        function showMessage(message) {
+            messageNode.textContent = message;
+            messageNode.hidden = false;
+        }
+
+        function hideMessage() {
+            messageNode.textContent = '';
+            messageNode.hidden = true;
+        }
+    })();
+</script>
 </body>
 </html>

@@ -224,15 +224,15 @@
         }
     </style>
 </head>
-<body>
+<body data-authenticated="{{ 'true' if user else 'false' }}" data-current-chat-id="{{ selected_chat.id if selected_chat else '' }}">
 <div class="layout">
     <aside>
         <div>
-            <p class="eyebrow">Signed in as</p>
-            <h1>{{ user.login }}</h1>
+            <p class="eyebrow">{% if user %}Signed in as{% else %}Bearer token auth{% endif %}</p>
+            <h1>{% if user %}{{ user.login }}{% else %}Local chat{% endif %}</h1>
         </div>
 
-        <form method="post" action="/logout">
+        <form id="logout-form" method="post" action="/api/auth/logout" {% if not user %}hidden{% endif %}>
             <button class="secondary-button" type="submit">Logout</button>
         </form>
 
@@ -240,10 +240,11 @@
             <div class="panel-inner">
                 <h2>Start new chat</h2>
                 <p class="meta">Messages are persisted and answered by a local GGUF-backed model.</p>
-                <form method="post" action="/chats">
-                    <textarea name="prompt" placeholder="Ask something to start a new thread." required>{{ prompt }}</textarea>
-                    <button type="submit">Create chat</button>
+                <form id="create-chat-form" method="post" action="/chats"{% if not user %} hidden{% endif %}>
+                    <textarea name="prompt" placeholder="Ask something to start a new thread." required {% if not user %}disabled{% endif %}>{{ prompt }}</textarea>
+                    <button type="submit" {% if not user %}disabled{% endif %}>Create chat</button>
                 </form>
+                <p class="empty-note" id="auth-shell-note" {% if user %}hidden{% endif %}>Sign in to load your chats and send prompts with a bearer token.</p>
             </div>
         </section>
 
@@ -298,24 +299,88 @@
 <script>
     (() => {
         const state = {
-            currentChatId: {{ selected_chat.id if selected_chat else 'null' }},
+            currentChatId: parseChatId(document.body.dataset.currentChatId),
+            isAuthenticated: document.body.dataset.authenticated === 'true',
             isStreaming: false,
+            popstateBound: false,
         };
+        const accessTokenKey = 'llm_chat.access_token';
+        const refreshTokenKey = 'llm_chat.refresh_token';
+        const loginUrl = '/login';
+        let createForm;
+        let messageForm;
+        let logoutForm;
+        let panel;
+        let titleNode;
+        let flashNode;
+        let chatList;
+        let authShellNote;
 
-        const createForm = document.querySelector('form[action="/chats"]');
-        const panel = document.getElementById('chat-panel');
-        const titleNode = document.getElementById('chat-title');
-        const flashNode = document.getElementById('chat-flash');
-        const chatList = document.getElementById('chat-list');
+        refreshDomRefs();
+        captureTokensFromQuery();
+        bindPage();
+        void bootstrapSession();
 
-        bindCreateForm();
-        bindMessageForm(document.getElementById('message-form'));
+        function refreshDomRefs() {
+            createForm = document.getElementById('create-chat-form');
+            messageForm = document.getElementById('message-form');
+            logoutForm = document.getElementById('logout-form');
+            panel = document.getElementById('chat-panel');
+            titleNode = document.getElementById('chat-title');
+            flashNode = document.getElementById('chat-flash');
+            chatList = document.getElementById('chat-list');
+            authShellNote = document.getElementById('auth-shell-note');
+        }
 
-        function bindCreateForm() {
-            if (!createForm) {
+        function bindPage() {
+            bindCreateForm();
+            bindMessageForm(messageForm);
+            bindLogoutForm();
+            bindChatLinks();
+            bindPopstate();
+        }
+
+        function bindPopstate() {
+            if (state.popstateBound) {
                 return;
             }
 
+            window.addEventListener('popstate', () => {
+                if (!hasStoredTokens()) {
+                    redirectToLogin();
+                    return;
+                }
+                void loadChatPage(`${window.location.pathname}${window.location.search}`, false);
+            });
+            state.popstateBound = true;
+        }
+
+        async function bootstrapSession() {
+            if (state.isAuthenticated) {
+                setAuthenticatedUi(true);
+                hideError();
+                return;
+            }
+
+            setAuthenticatedUi(false);
+            if (!hasStoredTokens()) {
+                redirectToLogin();
+                return;
+            }
+
+            try {
+                await loadChatPage(`${window.location.pathname}${window.location.search}`, false);
+            } catch (error) {
+                showError(String(error.message || error));
+            }
+        }
+
+        function bindCreateForm() {
+            if (!createForm || createForm.dataset.bound === 'true') {
+                return;
+            }
+
+            createForm.dataset.bound = 'true';
             createForm.addEventListener('submit', (event) => {
                 event.preventDefault();
                 void submitPrompt({
@@ -327,10 +392,11 @@
         }
 
         function bindMessageForm(form) {
-            if (!form) {
+            if (!form || form.dataset.bound === 'true') {
                 return;
             }
 
+            form.dataset.bound = 'true';
             form.addEventListener('submit', (event) => {
                 event.preventDefault();
                 if (state.currentChatId === null) {
@@ -343,6 +409,47 @@
                     isNewChat: false,
                 });
             });
+        }
+
+        function bindLogoutForm() {
+            if (!logoutForm || logoutForm.dataset.bound === 'true') {
+                return;
+            }
+
+            logoutForm.dataset.bound = 'true';
+            logoutForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                void logoutUser();
+            });
+        }
+
+        function bindChatLinks() {
+            if (!chatList) {
+                return;
+            }
+
+            chatList.querySelectorAll('.chat-link').forEach((link) => {
+                link.onclick = (event) => {
+                    event.preventDefault();
+                    void loadChatPage(link.getAttribute('href') || '/chats');
+                };
+            });
+        }
+
+        async function logoutUser() {
+            const refreshToken = getRefreshToken();
+            if (refreshToken) {
+                try {
+                    await fetch(`/api/auth/logout?refresh_token=${encodeURIComponent(refreshToken)}`, {
+                        method: 'POST',
+                    });
+                } catch (_) {
+                    // Ignore logout transport errors and clear local state anyway.
+                }
+            }
+
+            clearTokens();
+            redirectToLogin();
         }
 
         async function submitPrompt({ form, url, isNewChat }) {
@@ -374,7 +481,7 @@
             userMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
 
             try {
-                const response = await fetch(url, {
+                const response = await authorizedFetch(url, {
                     method: 'POST',
                     headers: {
                         'Accept': 'text/event-stream',
@@ -447,6 +554,7 @@
             }
 
             titleNode.textContent = buildChatTitle(prompt);
+            state.currentChatId = null;
         }
 
         function appendMessage(role, content) {
@@ -486,6 +594,7 @@
                 if (form) {
                     form.action = `/chats/${payload.chat_id}/messages`;
                 }
+                bindMessageForm(document.getElementById('message-form'));
                 return;
             }
 
@@ -517,6 +626,10 @@
             link.querySelector('.chat-title').textContent = title;
             link.querySelector('.meta').textContent = `${messageCount} messages`;
             updateChatSelection(chatId);
+            link.onclick = (event) => {
+                event.preventDefault();
+                void loadChatPage(link.getAttribute('href') || '/chats');
+            };
         }
 
         function updateChatMeta(chatId, messageCount) {
@@ -550,6 +663,181 @@
         function hideError() {
             flashNode.textContent = '';
             flashNode.hidden = true;
+        }
+
+        async function loadChatPage(url, pushState = true) {
+            const response = await authorizedFetch(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/html',
+                },
+            });
+            const html = await response.text();
+            hydrateFromHtml(html, url, pushState);
+        }
+
+        function hydrateFromHtml(html, url, pushState) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const nextAside = doc.querySelector('aside');
+            const nextMain = doc.querySelector('main');
+            const layout = document.querySelector('.layout');
+            if (!nextAside || !nextMain || !layout) {
+                throw new Error('Received an invalid chat page.');
+            }
+
+            const currentAside = layout.querySelector('aside');
+            const currentMain = layout.querySelector('main');
+            if (!currentAside || !currentMain) {
+                throw new Error('Chat layout is incomplete.');
+            }
+
+            currentAside.innerHTML = nextAside.innerHTML;
+            currentMain.innerHTML = nextMain.innerHTML;
+            document.title = doc.title;
+            document.body.dataset.authenticated = doc.body.dataset.authenticated || 'false';
+            document.body.dataset.currentChatId = doc.body.dataset.currentChatId || '';
+            state.isAuthenticated = document.body.dataset.authenticated === 'true';
+            state.currentChatId = parseChatId(document.body.dataset.currentChatId);
+            refreshDomRefs();
+            setAuthenticatedUi(state.isAuthenticated);
+            bindPage();
+            if (pushState) {
+                window.history.pushState({}, '', url);
+            }
+        }
+
+        function setAuthenticatedUi(isAuthenticated) {
+            if (logoutForm) {
+                logoutForm.hidden = !isAuthenticated;
+            }
+            if (createForm) {
+                createForm.hidden = !isAuthenticated;
+                const textarea = createForm.querySelector('textarea[name="prompt"]');
+                const button = createForm.querySelector('button[type="submit"]');
+                if (textarea) {
+                    textarea.disabled = !isAuthenticated;
+                }
+                if (button) {
+                    button.disabled = !isAuthenticated;
+                }
+            }
+            if (authShellNote) {
+                authShellNote.hidden = isAuthenticated;
+            }
+        }
+
+        async function authorizedFetch(url, options = {}, retry = true) {
+            const accessToken = getAccessToken();
+            if (!accessToken) {
+                const refreshed = retry ? await refreshStoredTokens() : false;
+                if (!refreshed) {
+                    clearTokens();
+                    redirectToLogin();
+                    throw new Error('Authentication required.');
+                }
+                return authorizedFetch(url, options, false);
+            }
+
+            const headers = new Headers(options.headers || {});
+            headers.set('Authorization', `Bearer ${accessToken}`);
+            const response = await fetch(url, {
+                ...options,
+                headers,
+            });
+            if (response.status !== 401) {
+                return response;
+            }
+
+            if (retry && await refreshStoredTokens()) {
+                return authorizedFetch(url, options, false);
+            }
+
+            clearTokens();
+            redirectToLogin();
+            throw new Error('Authentication required.');
+        }
+
+        async function refreshStoredTokens() {
+            const refreshToken = getRefreshToken();
+            if (!refreshToken) {
+                return false;
+            }
+
+            const response = await fetch(`/api/auth/refresh?refresh_token=${encodeURIComponent(refreshToken)}`, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                },
+            });
+            if (!response.ok) {
+                return false;
+            }
+
+            const body = await response.json().catch(() => null);
+            if (!body) {
+                return false;
+            }
+
+            storeTokens(body);
+            return true;
+        }
+
+        function captureTokensFromQuery() {
+            const params = new URLSearchParams(window.location.search);
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            if (!accessToken && !refreshToken) {
+                return;
+            }
+
+            storeTokens({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            });
+            params.delete('access_token');
+            params.delete('refresh_token');
+            const cleanQuery = params.toString();
+            const cleanUrl = cleanQuery ? `${window.location.pathname}?${cleanQuery}` : window.location.pathname;
+            window.history.replaceState({}, '', cleanUrl);
+        }
+
+        function storeTokens(tokens) {
+            if (tokens.access_token) {
+                localStorage.setItem(accessTokenKey, tokens.access_token);
+            }
+            if (tokens.refresh_token) {
+                localStorage.setItem(refreshTokenKey, tokens.refresh_token);
+            }
+        }
+
+        function clearTokens() {
+            localStorage.removeItem(accessTokenKey);
+            localStorage.removeItem(refreshTokenKey);
+        }
+
+        function getAccessToken() {
+            return localStorage.getItem(accessTokenKey);
+        }
+
+        function getRefreshToken() {
+            return localStorage.getItem(refreshTokenKey);
+        }
+
+        function hasStoredTokens() {
+            return Boolean(getAccessToken() || getRefreshToken());
+        }
+
+        function redirectToLogin() {
+            window.location.replace(loginUrl);
+        }
+
+        function parseChatId(value) {
+            if (!value) {
+                return null;
+            }
+
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
         }
 
         async function consumeEventStream(stream, onEvent) {
