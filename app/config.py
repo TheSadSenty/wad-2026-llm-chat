@@ -51,7 +51,6 @@ class GithubAuthConfig(BaseModel):
 
     client_id: str
     client_secret: str
-    allow_signup: bool
 
 
 class AuthConfig(BaseModel):

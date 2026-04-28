@@ -2,11 +2,21 @@
 
 Server-rendered LLM chat application built with FastAPI, PostgreSQL, Redis, and a local GGUF model.
 
+## Current Stack
+
+- Python `3.13`
+- FastAPI
+- SQLAlchemy + Alembic
+- PostgreSQL
+- Redis
+- JWT access tokens
+- `llama-cpp-python` with a local GGUF model
+
 ## Requirements
 
 - Python `3.13`
 - [`uv`](https://docs.astral.sh/uv/)
-- Docker and Docker Compose
+- Docker and Docker Compose if you want containerized PostgreSQL and Redis
 - A local GGUF model file, for example [`qwen.gguf`](./qwen.gguf)
 
 ## Configuration
@@ -19,11 +29,12 @@ The application loads configuration from the project-level `.env` file.
 cp .env.example .env
 ```
 
-2. Fill in the required secrets, especially:
+2. Fill in the required values:
 
 - `LLM_CHAT_AUTH__JWT_SECRET`
 - `LLM_CHAT_DATABASE__POSTGRES__USER`
 - `LLM_CHAT_DATABASE__POSTGRES__PASSWORD`
+- `LLM_CHAT_LLM__GGUF_PATH` if your model is not at `./qwen.gguf`
 
 All variables use the `LLM_CHAT_` prefix and nested sections use `__`.
 
@@ -42,23 +53,21 @@ Create the local virtual environment and sync dependencies:
 uv sync
 ```
 
-This creates `.venv` if it does not exist and installs the locked default dependencies.
-
-If you also want the optional groups used in this repository:
+If you also want the optional dependency groups used by this repository:
 
 ```shell
 uv sync --group linters --group tests
 ```
 
-Activate the environment if you want a regular shell session inside it:
+Activate the environment if you want an interactive shell inside it:
 
 ```shell
 source .venv/bin/activate
 ```
 
-## Run Locally With `uv` And Compose-Managed PostgreSQL
+## Run Locally With `uv` And Compose-Managed Services
 
-If you want to run the FastAPI app from your local `.venv` but do not want to install PostgreSQL or Redis on the host, you can start only the required Compose services.
+Use this mode when you want the app to run from your host environment but PostgreSQL, Redis, and migrations to run in Docker.
 
 1. Create and fill `.env`:
 
@@ -78,14 +87,7 @@ docker compose up db redis prestart
 uv run python -m app
 ```
 
-With the default `.env.example` values, the host app connects to PostgreSQL at `127.0.0.1:5432` and Redis at `127.0.0.1:6379`, while Docker Compose provides the actual containers.
-
-Use this mode when you want:
-
-- PostgreSQL from Docker
-- Redis from Docker
-- Alembic migrations from Docker
-- FastAPI app from the local `uv` environment
+With the default `.env.example`, the host app connects to PostgreSQL at `127.0.0.1:5432` and Redis at `127.0.0.1:6379`.
 
 ## Run Locally Without Docker
 
@@ -102,11 +104,11 @@ uv run alembic upgrade head
 uv run python -m app
 ```
 
-The app listens on `http://127.0.0.1:8000` with the default example config in both local `uv` workflows.
+With the default example config, the app listens on `http://127.0.0.1:8000`.
 
 ## Run Locally With Docker Compose
 
-The repository includes a local `docker-compose.yml` for the backend, PostgreSQL, and Redis.
+The repository includes a `docker-compose.yml` for the backend, PostgreSQL, Redis, and a prestart migration job.
 
 1. Create and fill `.env`:
 
@@ -120,44 +122,71 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Compose uses the same project-level `.env` file.
-
 This starts:
 
 - `backend` on `http://localhost:8000`
 - `db` on `localhost:5432`
 - `redis` on `localhost:6379`
 
-The `prestart` container runs `alembic upgrade head` before the backend starts.
-
 Notes:
 
-- Inside Docker Compose, the application connects to PostgreSQL via the service name `db`.
-- Inside Docker Compose, the application connects to Redis via the service name `redis`.
-- The compose file overrides `LLM_CHAT_DATABASE__POSTGRES__HOST=db` automatically for the app containers.
-- The compose file overrides `LLM_CHAT_REDIS__HOST=redis` automatically for the app container.
-- The image copies `qwen.gguf` into the container, so the default `LLM_CHAT_LLM__GGUF_PATH=./qwen.gguf` works there too.
+- The `prestart` service runs `alembic upgrade head` before the backend starts.
+- Inside Compose, the app connects to PostgreSQL via `db` and Redis via `redis`.
+- The image copies `qwen.gguf` into the container, so `LLM_CHAT_LLM__GGUF_PATH=./qwen.gguf` works there if that file exists in the project root during build.
 
-## Authentication API
+## Authentication Model
 
-Authentication is now token-based.
+Authentication is token-based.
 
-- `POST /api/auth/register` returns an access token and refresh token.
-- `POST /api/auth/login` returns an access token and refresh token.
-- `POST /api/auth/refresh?refresh_token=...` rotates the refresh token and returns a new pair.
-- `POST /api/auth/logout?refresh_token=...` invalidates the refresh session in Redis.
+- `POST /api/auth/register` accepts JSON and returns an access token plus refresh token.
+- `POST /api/auth/login` accepts JSON and returns an access token plus refresh token.
+- `POST /api/auth/refresh?refresh_token=...` rotates the refresh token and returns a fresh pair.
+- `POST /api/auth/logout?refresh_token=...` deletes the refresh session from Redis.
 - `GET /api/auth/github/login` starts GitHub OAuth.
-- `GET /api/auth/github/callback` completes GitHub OAuth and redirects with the token pair in query parameters.
+- `GET /api/auth/github/callback` completes GitHub OAuth.
 
-Protected requests should send:
+Protected endpoints expect:
 
 ```text
 Authorization: Bearer <access_token>
 ```
 
+Refresh sessions are stored in Redis with TTL based on `LLM_CHAT_AUTH__REFRESH_TOKEN_TTL_DAYS`.
+
+## Browser Flow
+
+The app does not use cookie-based sessions for the chat UI.
+
+- `/login` renders the login page
+- `/register` renders the registration page
+- `/chats` renders the chat workspace
+
+The browser pages use JavaScript to:
+
+- call the auth API
+- store `access_token` and `refresh_token` in `localStorage`
+- send the access token as a Bearer token on chat requests
+- call refresh/logout endpoints with the refresh token
+
+## Chat Endpoints
+
+The chat UI is server-rendered HTML, but authenticated with JWT Bearer tokens.
+
+- `GET /` redirects to `/chats`
+- `GET /chats` renders the chat page for the current user
+- `POST /chats` creates a new chat and redirects to it
+- `POST /chats/{chat_id}/messages` appends a message and redirects back to the chat
+
+Streaming endpoints are also available and used by the browser UI:
+
+- `POST /chats/stream` creates a new chat and streams the assistant reply
+- `POST /chats/{chat_id}/messages/stream` appends a message and streams the assistant reply
+
+Streaming responses use Server-Sent Events with `meta`, `token`, `done`, and `error` events.
+
 ## Available Configuration Options
 
-All available settings currently come from [`app/config.py`](./app/config.py).
+All runtime settings come from [`app/config.py`](./app/config.py).
 
 | Variable | Required | Default in `.env.example` | Description |
 | --- | --- | --- | --- |
@@ -168,15 +197,15 @@ All available settings currently come from [`app/config.py`](./app/config.py).
 | `LLM_CHAT_AUTH__REFRESH_TOKEN_TTL_DAYS` | No | `30` | Refresh-session lifetime in Redis, in days. |
 | `LLM_CHAT_AUTH__GITHUB__CLIENT_ID` | No | none | GitHub OAuth app client ID. Required only when enabling GitHub sign-in. |
 | `LLM_CHAT_AUTH__GITHUB__CLIENT_SECRET` | No | none | GitHub OAuth app client secret. Required only when enabling GitHub sign-in. |
-| `LLM_CHAT_AUTH__GITHUB__ALLOW_SIGNUP` | No | `true` when set | Controls GitHub's signup prompt in the authorization flow. Only used when GitHub OAuth config is present. |
+| `LLM_CHAT_AUTH__GITHUB__ALLOW_SIGNUP` | No | none | Controls GitHub's signup prompt in the authorization flow when GitHub OAuth is enabled. |
 | `LLM_CHAT_DATABASE__POSTGRES__HOST` | No | `127.0.0.1` | PostgreSQL host. In Docker Compose this is overridden to `db` for app containers. |
 | `LLM_CHAT_DATABASE__POSTGRES__PORT` | No | `5432` | PostgreSQL port. |
 | `LLM_CHAT_DATABASE__POSTGRES__DBNAME` | No | `llm-chat` | PostgreSQL database name. |
 | `LLM_CHAT_DATABASE__POSTGRES__USER` | Yes | none | PostgreSQL username. |
 | `LLM_CHAT_DATABASE__POSTGRES__PASSWORD` | Yes | none | PostgreSQL password. |
-| `LLM_CHAT_REDIS__HOST` | No | `127.0.0.1` | Redis host. In Docker Compose this is overridden to `redis` for the app container. |
+| `LLM_CHAT_REDIS__HOST` | No | `127.0.0.1` | Redis host. In Docker Compose this is overridden to `redis`. |
 | `LLM_CHAT_REDIS__PORT` | No | `6379` | Redis port. |
-| `LLM_CHAT_REDIS__DB` | No | `0` | Redis database index used for refresh-session storage. |
+| `LLM_CHAT_REDIS__DB` | No | `0` | Redis database index used for refresh sessions. |
 | `LLM_CHAT_REDIS__PASSWORD` | No | none | Optional Redis password. |
 | `LLM_CHAT_LLM__GGUF_PATH` | Yes | `./qwen.gguf` | Path to the local GGUF model file used by `llama-cpp-python`. |
 
@@ -187,11 +216,11 @@ GitHub OAuth is optional. To enable it, set:
 - `LLM_CHAT_AUTH__GITHUB__CLIENT_ID`
 - `LLM_CHAT_AUTH__GITHUB__CLIENT_SECRET`
 
-You can also set:
+Optional:
 
 - `LLM_CHAT_AUTH__GITHUB__ALLOW_SIGNUP=true`
 
-Register the callback URL on your GitHub OAuth app as:
+Register the callback URL on your GitHub OAuth app as the full URL to:
 
 ```text
 /api/auth/github/callback

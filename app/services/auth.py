@@ -154,7 +154,6 @@ def get_github_authorization_url(*, redirect_uri: str) -> str:
             'redirect_uri': redirect_uri,
             'scope': GITHUB_OAUTH_SCOPE,
             'state': create_github_oauth_state(redirect_uri=redirect_uri),
-            'allow_signup': str(settings.auth.github.allow_signup).lower(),
         },
     )
     return f'{GITHUB_AUTHORIZE_URL}?{query}'
