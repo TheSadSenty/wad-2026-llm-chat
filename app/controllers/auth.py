@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_db_session
 from app.forms import LoginForm, RegistrationForm
+from app.models.user import User
 from app.services.auth import (
     AUTH_COOKIE_NAME,
     GithubEmailNotAvailableError,
@@ -166,8 +167,8 @@ async def github_login(request: Request) -> RedirectResponse | HTMLResponse:
 async def github_callback(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    code: str | None = None,
-    state: str | None = None,
+    code: str,
+    state: str,
     error: str | None = None,
 ) -> RedirectResponse | HTMLResponse:
     """Handle the GitHub OAuth callback and sign the user into the app."""
@@ -263,7 +264,7 @@ async def _authenticate_github_callback(
     state: str,
     code: str,
     redirect_uri: str,
-):
+) -> User:
     validate_github_oauth_state(state=state, redirect_uri=redirect_uri)
     return await authenticate_with_github(
         session=session,
