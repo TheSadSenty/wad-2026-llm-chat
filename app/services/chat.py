@@ -13,17 +13,17 @@ def _build_chat_title(prompt: str) -> str:
     return f'{shortened_prompt[:45].rstrip()}...'
 
 
-async def list_user_chats_async(*, session: AsyncSession, user_id: int) -> list[Chat]:
+async def list_user_chats(*, session: AsyncSession, user_id: int) -> list[Chat]:
     """Return persisted chats for a user."""
     return await list_chats_for_user(session, user_id=user_id)
 
 
-async def get_user_chat_async(*, session: AsyncSession, user_id: int, chat_id: int) -> Chat | None:
+async def get_user_chat(*, session: AsyncSession, user_id: int, chat_id: int) -> Chat | None:
     """Return a single chat for a user."""
     return await get_chat_for_user(session, chat_id=chat_id, user_id=user_id)
 
 
-async def create_chat_with_user_message_async(*, session: AsyncSession, user_id: int, prompt: str) -> Chat:
+async def create_chat_with_user_message(*, session: AsyncSession, user_id: int, prompt: str) -> Chat:
     """Create a new chat and persist only the user message."""
     normalized_prompt = prompt.strip()
     chat = await add_chat(
@@ -36,7 +36,7 @@ async def create_chat_with_user_message_async(*, session: AsyncSession, user_id:
     return await get_chat_for_user(session, chat_id=chat.id, user_id=user_id) or chat
 
 
-async def append_user_message_async(
+async def append_user_message(
     *,
     session: AsyncSession,
     user_id: int,
@@ -54,7 +54,7 @@ async def append_user_message_async(
     return await get_chat_for_user(session, chat_id=chat.id, user_id=chat.user_id) or chat
 
 
-async def persist_assistant_reply_async(
+async def persist_assistant_reply(
     *,
     session: AsyncSession,
     user_id: int,
@@ -71,11 +71,11 @@ async def persist_assistant_reply_async(
     return await get_chat_for_user(session, chat_id=chat.id, user_id=chat.user_id) or chat
 
 
-async def create_chat_with_llm_reply_async(*, session: AsyncSession, user_id: int, prompt: str) -> Chat:
+async def create_chat_with_llm_reply(*, session: AsyncSession, user_id: int, prompt: str) -> Chat:
     """Create a new chat and persist an LLM-generated assistant reply."""
-    chat = await create_chat_with_user_message_async(session=session, user_id=user_id, prompt=prompt)
+    chat = await create_chat_with_user_message(session=session, user_id=user_id, prompt=prompt)
     assistant_reply = await get_llm_service().generate_reply(messages=chat.messages)
-    persisted_chat = await persist_assistant_reply_async(
+    persisted_chat = await persist_assistant_reply(
         session=session,
         user_id=user_id,
         chat_id=chat.id,
@@ -88,15 +88,15 @@ async def create_chat_with_llm_reply_async(*, session: AsyncSession, user_id: in
     return persisted_chat
 
 
-async def append_llm_reply_async(*, session: AsyncSession, user_id: int, chat_id: int, prompt: str) -> Chat:
+async def append_llm_reply(*, session: AsyncSession, user_id: int, chat_id: int, prompt: str) -> Chat:
     """Append a user message and an LLM-generated assistant reply."""
-    updated_chat = await append_user_message_async(session=session, user_id=user_id, chat_id=chat_id, prompt=prompt)
+    updated_chat = await append_user_message(session=session, user_id=user_id, chat_id=chat_id, prompt=prompt)
     if updated_chat is None:
         msg = 'Chat not found.'
         raise RuntimeError(msg)
 
     assistant_reply = await get_llm_service().generate_reply(messages=updated_chat.messages)
-    persisted_chat = await persist_assistant_reply_async(
+    persisted_chat = await persist_assistant_reply(
         session=session,
         user_id=user_id,
         chat_id=updated_chat.id,

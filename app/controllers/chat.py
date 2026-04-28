@@ -13,13 +13,13 @@ from app.models.csat import Chat
 from app.models.user import User
 from app.services.auth import get_current_user_from_request
 from app.services.chat import (
-    append_llm_reply_async,
-    append_user_message_async,
-    create_chat_with_llm_reply_async,
-    create_chat_with_user_message_async,
-    get_user_chat_async,
-    list_user_chats_async,
-    persist_assistant_reply_async,
+    append_llm_reply,
+    append_user_message,
+    create_chat_with_llm_reply,
+    create_chat_with_user_message,
+    get_user_chat,
+    list_user_chats,
+    persist_assistant_reply,
 )
 from app.services.llm import get_llm_service
 
@@ -95,10 +95,10 @@ async def chat_index(
     if current_user is None:
         return _redirect_to_login()
 
-    chats = await list_user_chats_async(session=session, user_id=current_user.id)
+    chats = await list_user_chats(session=session, user_id=current_user.id)
     selected_chat = chats[0] if chats else None
     if chat_id is not None:
-        selected_chat = await get_user_chat_async(session=session, user_id=current_user.id, chat_id=chat_id)
+        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
         if selected_chat is None:
             raise HTTPException(status_code=404, detail='Chat not found.')
 
@@ -123,7 +123,7 @@ async def create_chat(
 
     prompt = data.prompt.strip()
     if not prompt:
-        chats = await list_user_chats_async(session=session, user_id=current_user.id)
+        chats = await list_user_chats(session=session, user_id=current_user.id)
         return _render_chat_page(
             request,
             user=current_user,
@@ -134,9 +134,9 @@ async def create_chat(
         )
 
     try:
-        chat = await create_chat_with_llm_reply_async(session=session, user_id=current_user.id, prompt=prompt)
+        chat = await create_chat_with_llm_reply(session=session, user_id=current_user.id, prompt=prompt)
     except RuntimeError as error:
-        chats = await list_user_chats_async(session=session, user_id=current_user.id)
+        chats = await list_user_chats(session=session, user_id=current_user.id)
         return _render_chat_page(
             request,
             user=current_user,
@@ -162,14 +162,14 @@ async def send_message(
     if current_user is None:
         return _redirect_to_login()
 
-    chat = await get_user_chat_async(session=session, user_id=current_user.id, chat_id=chat_id)
+    chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail='Chat not found.')
 
     prompt = data.prompt.strip()
     if not prompt:
-        chats = await list_user_chats_async(session=session, user_id=current_user.id)
-        selected_chat = await get_user_chat_async(session=session, user_id=current_user.id, chat_id=chat_id)
+        chats = await list_user_chats(session=session, user_id=current_user.id)
+        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
         return _render_chat_page(
             request,
             user=current_user,
@@ -180,10 +180,10 @@ async def send_message(
         )
 
     try:
-        await append_llm_reply_async(session=session, user_id=current_user.id, chat_id=chat.id, prompt=prompt)
+        await append_llm_reply(session=session, user_id=current_user.id, chat_id=chat.id, prompt=prompt)
     except RuntimeError as error:
-        chats = await list_user_chats_async(session=session, user_id=current_user.id)
-        selected_chat = await get_user_chat_async(session=session, user_id=current_user.id, chat_id=chat_id)
+        chats = await list_user_chats(session=session, user_id=current_user.id)
+        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
         return _render_chat_page(
             request,
             user=current_user,
@@ -213,7 +213,7 @@ async def create_chat_stream(
         return PlainTextResponse('Message cannot be empty.', status_code=422)
 
     try:
-        chat = await create_chat_with_user_message_async(session=session, user_id=current_user.id, prompt=prompt)
+        chat = await create_chat_with_user_message(session=session, user_id=current_user.id, prompt=prompt)
     except RuntimeError as error:
         return PlainTextResponse(str(error), status_code=503)
 
@@ -238,7 +238,7 @@ async def create_chat_stream(
                 msg = 'The local model returned an empty response.'
                 raise RuntimeError(msg)
 
-            updated_chat = await persist_assistant_reply_async(
+            updated_chat = await persist_assistant_reply(
                 session=session,
                 user_id=current_user.id,
                 chat_id=chat.id,
@@ -274,7 +274,7 @@ async def send_message_stream(
     if current_user is None:
         return _redirect_to_login()
 
-    chat = await get_user_chat_async(session=session, user_id=current_user.id, chat_id=chat_id)
+    chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
     if chat is None:
         return PlainTextResponse('Chat not found.', status_code=404)
 
@@ -282,7 +282,7 @@ async def send_message_stream(
     if not prompt:
         return PlainTextResponse('Message cannot be empty.', status_code=422)
 
-    updated_chat = await append_user_message_async(
+    updated_chat = await append_user_message(
         session=session,
         user_id=current_user.id,
         chat_id=chat.id,
@@ -312,7 +312,7 @@ async def send_message_stream(
                 msg = 'The local model returned an empty response.'
                 raise RuntimeError(msg)
 
-            final_chat = await persist_assistant_reply_async(
+            final_chat = await persist_assistant_reply(
                 session=session,
                 user_id=current_user.id,
                 chat_id=updated_chat.id,

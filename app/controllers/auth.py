@@ -17,11 +17,11 @@ from app.services.auth import (
     GithubOAuthStateError,
     InvalidCredentialsError,
     RegistrationConflictError,
-    authenticate_user_async,
-    authenticate_with_github_async,
+    authenticate_user,
+    authenticate_with_github,
     create_user_access_token,
     get_github_authorization_url,
-    register_user_async,
+    register_user,
     validate_github_oauth_state,
 )
 
@@ -81,7 +81,7 @@ async def register(
 ) -> HTMLResponse:
     """Register a new user account."""
     try:
-        created_user = await register_user_async(
+        created_user = await register_user(
             session=session,
             login=str(registration_form_data.login),
             password=registration_form_data.password,
@@ -121,7 +121,7 @@ async def login(
 ) -> HTMLResponse | RedirectResponse:
     """Authenticate a user and issue a JWT-backed auth cookie."""
     try:
-        user = await authenticate_user_async(
+        user = await authenticate_user(
             session=session,
             login=str(login_form_data.login),
             password=login_form_data.password,
@@ -188,7 +188,7 @@ async def github_callback(
     redirect_uri = str(request.url_for('github_callback'))
     try:
         validate_github_oauth_state(state=state, redirect_uri=redirect_uri)
-        user = await authenticate_with_github_async(session=session, code=code, redirect_uri=redirect_uri)
+        user = await authenticate_with_github(session=session, code=code, redirect_uri=redirect_uri)
     except GithubOAuthConfigurationError:
         return _render_login_page(
             request,

@@ -99,7 +99,7 @@ async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     return await get_user_by_id_query(session, user_id)
 
 
-async def register_user_async(*, session: AsyncSession, login: str, password: str) -> User:
+async def register_user(*, session: AsyncSession, login: str, password: str) -> User:
     """Register a new user account."""
     if await get_user_by_login(session, login) is not None:
         raise RegistrationConflictError
@@ -111,7 +111,7 @@ async def register_user_async(*, session: AsyncSession, login: str, password: st
     )
 
 
-async def authenticate_user_async(*, session: AsyncSession, login: str, password: str) -> User:
+async def authenticate_user(*, session: AsyncSession, login: str, password: str) -> User:
     """Authenticate a user."""
     user = await get_user_by_login(session, login)
     if user is None or not verify_password(password, user.password_hash):
@@ -184,7 +184,7 @@ async def get_user_from_access_token(session: AsyncSession, token: str) -> User 
     return await get_user_by_id(session, user_id)
 
 
-async def authenticate_with_github_async(
+async def authenticate_with_github(
     *,
     session: AsyncSession,
     code: str,
