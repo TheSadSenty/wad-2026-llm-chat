@@ -197,7 +197,6 @@ All runtime settings come from [`app/config.py`](./app/config.py).
 | `LLM_CHAT_AUTH__REFRESH_TOKEN_TTL_DAYS` | No | `30` | Refresh-session lifetime in Redis, in days. |
 | `LLM_CHAT_AUTH__GITHUB__CLIENT_ID` | No | none | GitHub OAuth app client ID. Required only when enabling GitHub sign-in. |
 | `LLM_CHAT_AUTH__GITHUB__CLIENT_SECRET` | No | none | GitHub OAuth app client secret. Required only when enabling GitHub sign-in. |
-| `LLM_CHAT_AUTH__GITHUB__ALLOW_SIGNUP` | No | none | Controls GitHub's signup prompt in the authorization flow when GitHub OAuth is enabled. |
 | `LLM_CHAT_DATABASE__POSTGRES__HOST` | No | `127.0.0.1` | PostgreSQL host. In Docker Compose this is overridden to `db` for app containers. |
 | `LLM_CHAT_DATABASE__POSTGRES__PORT` | No | `5432` | PostgreSQL port. |
 | `LLM_CHAT_DATABASE__POSTGRES__DBNAME` | No | `llm-chat` | PostgreSQL database name. |
@@ -215,10 +214,6 @@ GitHub OAuth is optional. To enable it, set:
 
 - `LLM_CHAT_AUTH__GITHUB__CLIENT_ID`
 - `LLM_CHAT_AUTH__GITHUB__CLIENT_SECRET`
-
-Optional:
-
-- `LLM_CHAT_AUTH__GITHUB__ALLOW_SIGNUP=true`
 
 Register the callback URL on your GitHub OAuth app as the full URL to:
 
