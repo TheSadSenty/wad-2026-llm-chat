@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
   uv sync --frozen --no-install-project
 
-COPY pyproject.toml alembic.ini config.toml ./
+COPY pyproject.toml alembic.ini ./
 
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers

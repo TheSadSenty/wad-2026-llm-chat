@@ -1,5 +1,6 @@
 *.gguf
-config.toml
+.env*
+!.env.example
 
 # Python-generated files
 __pycache__/

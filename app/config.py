@@ -1,17 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Self, override
+from typing import Any, Self
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    TomlConfigSettingsSource,
-)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-CONFIG_FILE_NAME = 'config.toml'
+ENV_FILE_NAME = '.env'
 
 
 class AppConfig(BaseModel):
@@ -82,7 +77,8 @@ class Config(BaseSettings):
         case_sensitive=False,
         validate_default=True,
         extra='ignore',
-        toml_file=CONFIG_FILE_NAME,
+        env_file=ENV_FILE_NAME,
+        env_file_encoding='utf-8',
         frozen=True,
     )
 
@@ -90,19 +86,6 @@ class Config(BaseSettings):
     def load_config(cls, **kwargs: Any) -> Self:
         """Load config."""
         return cls(**kwargs)
-
-    @override
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Load defaults from TOML and allow environment variables to override them."""
-        return (env_settings, TomlConfigSettingsSource(settings_cls))
 
     @property
     def database_url(self) -> str:
