@@ -9,7 +9,7 @@ import jwt
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.config import GithubAuthConfig, get_settings
 from app.models.user import User
 from app.repositories.users import (
     create_user,
@@ -28,11 +28,11 @@ from app.services.security import (
 )
 
 AUTH_COOKIE_NAME = 'llm_chat_access_token'
-GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
+GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'  # noqa: S105
 GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 GITHUB_EMAILS_URL = 'https://api.github.com/user/emails'
 GITHUB_USER_URL = 'https://api.github.com/user'
-GITHUB_OAUTH_STATE_TOKEN_TYPE = 'github_oauth_state'
+GITHUB_OAUTH_STATE_TOKEN_TYPE = 'github_oauth_state'  # noqa: S105
 GITHUB_OAUTH_STATE_TTL_MINUTES = 10
 GITHUB_OAUTH_SCOPE = 'user:email'
 GITHUB_HTTP_TIMEOUT_SECONDS = 10
@@ -128,7 +128,7 @@ def create_user_access_token(user: User) -> str:
 def get_github_authorization_url(*, redirect_uri: str) -> str:
     """Build the GitHub OAuth authorization URL."""
     settings = get_settings()
-    if not settings.auth.github.oauth_enabled:
+    if not settings.auth.github:
         raise GithubOAuthConfigurationError
 
     query = urlencode(
@@ -191,16 +191,17 @@ async def authenticate_with_github(
     redirect_uri: str,
 ) -> User:
     """Resolve the GitHub callback into a local user."""
-    settings = get_settings()
-    if not settings.auth.github.oauth_enabled:
+    github_auth_config = get_settings().auth.github
+    if not github_auth_config:
         raise GithubOAuthConfigurationError
 
     timeout = aiohttp.ClientTimeout(total=GITHUB_HTTP_TIMEOUT_SECONDS)
     async with aiohttp.ClientSession(timeout=timeout) as client:
         access_token = await _exchange_github_code_for_access_token(
-            client=client,
-            code=code,
-            redirect_uri=redirect_uri,
+            client,
+            github_auth_config,
+            code,
+            redirect_uri,
         )
         identity = await _fetch_github_identity(
             client=client,
@@ -243,18 +244,17 @@ def _generate_unusable_password_hash() -> str:
 
 
 async def _exchange_github_code_for_access_token(
-    *,
     client: aiohttp.ClientSession,
+    github_auth_config: GithubAuthConfig,
     code: str,
     redirect_uri: str,
 ) -> str:
-    settings = get_settings()
     response = await _send_github_request(
         client=client,
         url=GITHUB_ACCESS_TOKEN_URL,
         form_data={
-            'client_id': settings.auth.github.client_id,
-            'client_secret': settings.auth.github.client_secret,
+            'client_id': github_auth_config.client_id,
+            'client_secret': github_auth_config.client_secret,
             'code': code,
             'redirect_uri': redirect_uri,
         },
@@ -292,24 +292,40 @@ def _extract_primary_email(payload: object) -> str:
     if not isinstance(payload, list):
         raise GithubOAuthError('GitHub returned an unexpected email response.')
 
+    selected_email = _select_github_email(payload)
+    if selected_email is None:
+        raise GithubEmailNotAvailableError
+    return selected_email
+
+
+def _select_github_email(payload: list[object]) -> str | None:
     selected_email: str | None = None
     for item in payload:
-        if not isinstance(item, dict):
+        email = _extract_verified_email(item)
+        if email is None:
             continue
 
-        email = item.get('email')
-        verified = item.get('verified')
-        primary = item.get('primary')
-        if not isinstance(email, str) or not email or verified is not True:
-            continue
-        if primary is True:
+        if _is_primary_email(item):
             return email
         if selected_email is None:
             selected_email = email
 
-    if selected_email is None:
-        raise GithubEmailNotAvailableError
     return selected_email
+
+
+def _extract_verified_email(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+
+    email = item.get('email')
+    verified = item.get('verified')
+    if not isinstance(email, str) or not email or verified is not True:
+        return None
+    return email
+
+
+def _is_primary_email(item: object) -> bool:
+    return isinstance(item, dict) and item.get('primary') is True
 
 
 async def _send_github_request(
@@ -319,19 +335,14 @@ async def _send_github_request(
     form_data: dict[str, str] | None = None,
     access_token: str | None = None,
 ) -> dict[str, object] | list[object]:
-    headers = {'User-Agent': 'wad-2026-llm-chat'}
-    if access_token is not None:
-        headers['Accept'] = 'application/vnd.github+json'
-        headers['Authorization'] = f'Bearer {access_token}'
-        headers['X-GitHub-Api-Version'] = '2022-11-28'
-    else:
-        headers['Accept'] = 'application/json'
+    headers = _build_github_headers(access_token)
 
     try:
-        request_context = (
-            client.post(url, data=form_data, headers=headers)
-            if form_data is not None
-            else client.get(url, headers=headers)
+        request_context = _build_github_request_context(
+            client=client,
+            url=url,
+            form_data=form_data,
+            headers=headers,
         )
         async with request_context as response:
             parsed_payload = await _parse_github_response(response)
@@ -352,14 +363,40 @@ async def _send_github_request(
     return parsed_payload
 
 
+def _build_github_headers(access_token: str | None) -> dict[str, str]:
+    headers = {
+        'Accept': 'application/json',
+        'User-Agent': 'wad-2026-llm-chat',
+    }
+    if access_token is None:
+        return headers
+
+    headers['Accept'] = 'application/vnd.github+json'
+    headers['Authorization'] = f'Bearer {access_token}'
+    headers['X-GitHub-Api-Version'] = '2022-11-28'
+    return headers
+
+
+def _build_github_request_context(
+    *,
+    client: aiohttp.ClientSession,
+    url: str,
+    form_data: dict[str, str] | None,
+    headers: dict[str, str],
+) -> aiohttp.client._BaseRequestContextManager[aiohttp.ClientResponse]:
+    if form_data is not None:
+        return client.post(url, data=form_data, headers=headers)
+    return client.get(url, headers=headers)
+
+
 async def _parse_github_response(response: aiohttp.ClientResponse) -> dict[str, object] | list[object]:
     try:
         payload = await response.json(content_type=None)
     except (aiohttp.ContentTypeError, ValueError):
         raw_payload = await response.text()
         if raw_payload:
-            raise GithubOAuthError(raw_payload)
-        raise GithubOAuthError('GitHub returned an unreadable response.')
+            raise GithubOAuthError(raw_payload) from None
+        raise GithubOAuthError('GitHub returned an unreadable response.') from None
 
     if not isinstance(payload, (dict, list)):
         raise GithubOAuthError('GitHub returned an unexpected payload.')

@@ -51,25 +51,20 @@ class LlmConfig(BaseModel):
     gguf_path: Path
 
 
+class GithubAuthConfig(BaseModel):
+    """Authentication configuration."""
+
+    client_id: str
+    client_secret: str
+    allow_signup: bool
+
+
 class AuthConfig(BaseModel):
     """Authentication configuration."""
 
     jwt_secret: str
     access_token_ttl_minutes: int
-    github: 'GithubAuthConfig'
-
-
-class GithubAuthConfig(BaseModel):
-    """Authentication configuration."""
-
-    client_id: str | None = None
-    client_secret: str | None = None
-    allow_signup: bool = True
-
-    @property
-    def oauth_enabled(self) -> bool:
-        """Return whether GitHub OAuth is configured."""
-        return bool(self.client_id and self.client_secret)
+    github: GithubAuthConfig | None = None
 
 
 class Config(BaseSettings):

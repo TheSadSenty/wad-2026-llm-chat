@@ -42,7 +42,7 @@ def _render_registration_page(
         context={
             'error_message': error_message,
             'login': login,
-            'github_oauth_enabled': get_settings().auth.github.oauth_enabled,
+            'github_oauth_enabled': bool(get_settings().auth.github),
         },
         status_code=status_code,
     )
@@ -61,7 +61,7 @@ def _render_login_page(
         context={
             'error_message': error_message,
             'login': login,
-            'github_oauth_enabled': get_settings().auth.github.oauth_enabled,
+            'github_oauth_enabled': bool(get_settings().auth.github),
         },
         status_code=status_code,
     )
@@ -101,7 +101,7 @@ async def register(
             'error_message': None,
             'login': '',
             'success_message': f'User {created_user.login} registered successfully.',
-            'github_oauth_enabled': get_settings().auth.github.oauth_enabled,
+            'github_oauth_enabled': bool(get_settings().auth.github),
         },
         status_code=HTTPStatus.CREATED,
     )
@@ -171,24 +171,23 @@ async def github_callback(
     error: str | None = None,
 ) -> RedirectResponse | HTMLResponse:
     """Handle the GitHub OAuth callback and sign the user into the app."""
-    if error is not None:
-        return _render_login_page(
-            request,
-            error_message='GitHub authorization was denied or failed.',
-            status_code=HTTPStatus.UNAUTHORIZED,
-        )
-
-    if code is None or state is None:
-        return _render_login_page(
-            request,
-            error_message='GitHub did not return a valid authorization response.',
-            status_code=HTTPStatus.BAD_REQUEST,
-        )
+    invalid_response = _validate_github_callback_request(
+        request=request,
+        code=code,
+        state=state,
+        error=error,
+    )
+    if invalid_response is not None:
+        return invalid_response
 
     redirect_uri = str(request.url_for('github_callback'))
     try:
-        validate_github_oauth_state(state=state, redirect_uri=redirect_uri)
-        user = await authenticate_with_github(session=session, code=code, redirect_uri=redirect_uri)
+        user = await _authenticate_github_callback(
+            session=session,
+            state=state,
+            code=code,
+            redirect_uri=redirect_uri,
+        )
     except GithubOAuthConfigurationError:
         return _render_login_page(
             request,
@@ -207,10 +206,10 @@ async def github_callback(
             error_message='Your GitHub account does not expose a verified email address for sign-in.',
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
-    except GithubOAuthError as error:
+    except GithubOAuthError as github_oauth_error:
         return _render_login_page(
             request,
-            error_message=str(error),
+            error_message=str(github_oauth_error),
             status_code=HTTPStatus.BAD_GATEWAY,
         )
 
@@ -232,3 +231,42 @@ async def logout() -> RedirectResponse:
     response = RedirectResponse(url='/login', status_code=HTTPStatus.SEE_OTHER)
     response.delete_cookie(AUTH_COOKIE_NAME)
     return response
+
+
+def _validate_github_callback_request(
+    *,
+    request: Request,
+    code: str | None,
+    state: str | None,
+    error: str | None,
+) -> HTMLResponse | None:
+    if error is not None:
+        return _render_login_page(
+            request,
+            error_message='GitHub authorization was denied or failed.',
+            status_code=HTTPStatus.UNAUTHORIZED,
+        )
+
+    if code is None or state is None:
+        return _render_login_page(
+            request,
+            error_message='GitHub did not return a valid authorization response.',
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+    return None
+
+
+async def _authenticate_github_callback(
+    *,
+    session: AsyncSession,
+    state: str,
+    code: str,
+    redirect_uri: str,
+):
+    validate_github_oauth_state(state=state, redirect_uri=redirect_uri)
+    return await authenticate_with_github(
+        session=session,
+        code=code,
+        redirect_uri=redirect_uri,
+    )

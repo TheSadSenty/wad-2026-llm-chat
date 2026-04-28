@@ -6,6 +6,11 @@ port = 8000
 jwt_secret = 'change-this-jwt-secret'
 access_token_ttl_minutes = 60
 
+# [auth.github]
+# client_id = ''
+# client_secret = ''
+# allow_signup = true
+
 [database.postgres]
 host = '127.0.0.1'
 port = 5432
