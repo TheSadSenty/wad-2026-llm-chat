@@ -8,7 +8,7 @@ from app.config import get_settings
 
 password_hasher = PasswordHasher()
 JWT_ALGORITHM = 'HS256'
-JWT_TOKEN_TYPE = 'access'
+JWT_TOKEN_TYPE = 'access'  # noqa: S105
 
 
 class JwtDecodeError(Exception):
