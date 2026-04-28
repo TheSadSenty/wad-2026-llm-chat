@@ -77,7 +77,8 @@
         }
 
         button,
-        a.link {
+        a.link,
+        a.oauth-link {
             display: inline-flex;
             justify-content: center;
             align-items: center;
@@ -97,6 +98,32 @@
         a.link {
             border: 1px solid var(--border);
             color: var(--text);
+        }
+
+        a.oauth-link {
+            gap: 10px;
+            border: 1px solid rgba(31, 26, 23, 0.18);
+            background: #161b22;
+            color: #fff;
+        }
+
+        .divider {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 12px;
+            margin: 18px 0;
+            color: var(--muted);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            height: 1px;
+            background: var(--border);
         }
 
         .message {
@@ -136,6 +163,10 @@
     </form>
 
     <div class="actions">
+        {% if github_oauth_enabled %}
+        <div class="divider">or</div>
+        <a class="oauth-link" href="/auth/github">Continue with GitHub</a>
+        {% endif %}
         <a class="link" href="/register">Create a new account</a>
     </div>
 </main>

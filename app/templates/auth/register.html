@@ -119,6 +119,19 @@
             color: var(--text);
             text-decoration: none;
         }
+
+        .oauth-link {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid rgba(31, 26, 23, 0.18);
+            border-radius: 999px;
+            padding: 14px 18px;
+            background: #161b22;
+            color: #fff;
+            text-decoration: none;
+        }
     </style>
 </head>
 <body>
@@ -147,6 +160,9 @@
     </form>
 
     <div class="actions">
+        {% if github_oauth_enabled %}
+        <a class="oauth-link" href="/auth/github">Sign up with GitHub</a>
+        {% endif %}
         <a class="link" href="/login">Already registered? Log in</a>
     </div>
 </main>

@@ -56,6 +56,20 @@ class AuthConfig(BaseModel):
 
     jwt_secret: str
     access_token_ttl_minutes: int
+    github: 'GithubAuthConfig'
+
+
+class GithubAuthConfig(BaseModel):
+    """Authentication configuration."""
+
+    client_id: str | None = None
+    client_secret: str | None = None
+    allow_signup: bool = True
+
+    @property
+    def oauth_enabled(self) -> bool:
+        """Return whether GitHub OAuth is configured."""
+        return bool(self.client_id and self.client_secret)
 
 
 class Config(BaseSettings):
