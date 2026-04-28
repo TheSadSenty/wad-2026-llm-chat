@@ -8,10 +8,6 @@ repos:
       - id: ruff-format
         args:
           - '--check'
-  - repo: 'https://github.com/wemake-services/wemake-python-styleguide'
-    rev: 1.6.1
-    hooks:
-      - id: wemake-python-styleguide
   - repo: 'https://github.com/pre-commit/pre-commit-hooks'
     rev: v6.0.0
     hooks:

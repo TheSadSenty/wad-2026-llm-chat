@@ -6,10 +6,6 @@ APP_FOLDER := ./app/
 ruff_formatter:
 	$(UV) run ruff format
 
-.PHONY: flake8
-flake8:
-	$(UV) run flake8 $(APP_FOLDER)
-
 .PHONY: mypy
 mypy:
 	$(UV) run mypy $(APP_FOLDER)
@@ -20,7 +16,7 @@ ruff:
 	$(UV) run ruff format --check --diff
 
 .PHONY: linters
-linters: ruff mypy flake8
+linters: ruff mypy
 
 .PHONY: unit
 unit:
