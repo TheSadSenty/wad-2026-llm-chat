@@ -1,3 +1,5 @@
+from typing import override
+
 from fastapi import FastAPI, Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
@@ -9,6 +11,7 @@ from app.services.auth import get_access_token_from_request, get_user_from_acces
 class AuthMiddleware(BaseHTTPMiddleware):
     """Attach the authenticated user to request state."""
 
+    @override
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process user request and return responses.
 
