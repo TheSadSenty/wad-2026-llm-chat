@@ -1,4 +1,5 @@
 *.gguf
+config.toml
 
 # Python-generated files
 __pycache__/
