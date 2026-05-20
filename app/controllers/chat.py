@@ -1,9 +1,8 @@
-import json
 from collections.abc import AsyncIterator, Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,23 +12,18 @@ from app.models.csat import Chat
 from app.models.user import User
 from app.services.auth import get_current_user, get_optional_current_user
 from app.services.chat import (
-    append_llm_reply,
-    append_user_message,
-    create_chat_with_llm_reply,
-    create_chat_with_user_message,
-    get_user_chat,
-    list_user_chats,
-    persist_assistant_reply,
+    ChatNotFoundError,
+    ChatRedirectServiceResult,
+    ChatTextServiceResult,
+    build_chat_page,
+    handle_chat_creation,
+    handle_message_submission,
+    start_chat_creation_stream,
+    start_message_stream,
 )
-from app.services.llm import get_llm_service
 
 chat_router = APIRouter(tags=['chat'])
 templates = Jinja2Templates(directory='app/templates')
-
-
-def _sse_event(event: str, data: dict[str, object]) -> str:
-    payload = json.dumps(data)
-    return f'event: {event}\ndata: {payload}\n\n'
 
 
 def _streaming_response(event_stream: AsyncIterator[str] | Iterator[str]) -> StreamingResponse:
@@ -82,26 +76,23 @@ async def chat_index(
     chat_id: int | None = None,
 ) -> HTMLResponse:
     """Render the chat workspace for the current user."""
-    if current_user is None:
-        return _render_chat_page(
-            request,
-            user=None,
-            chats=[],
-            selected_chat=None,
+    try:
+        result = await build_chat_page(
+            session=session,
+            user_id=current_user.id if current_user is not None else None,
+            chat_id=chat_id,
         )
-
-    chats = await list_user_chats(session=session, user_id=current_user.id)
-    selected_chat = chats[0] if chats else None
-    if chat_id is not None:
-        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
-        if selected_chat is None:
-            raise HTTPException(status_code=404, detail='Chat not found.')
+    except ChatNotFoundError:
+        raise HTTPException(status_code=404, detail='Chat not found.') from None
 
     return _render_chat_page(
         request,
         user=current_user,
-        chats=chats,
-        selected_chat=selected_chat,
+        chats=result.chats,
+        selected_chat=result.selected_chat,
+        error_message=result.error_message,
+        prompt=result.prompt,
+        status_code=result.status_code,
     )
 
 
@@ -113,33 +104,23 @@ async def create_chat(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RedirectResponse | HTMLResponse:
     """Create a new chat from the first user prompt."""
-    prompt = data.prompt.strip()
-    if not prompt:
-        chats = await list_user_chats(session=session, user_id=current_user.id)
-        return _render_chat_page(
-            request,
-            user=current_user,
-            chats=chats,
-            selected_chat=chats[0] if chats else None,
-            error_message='Message cannot be empty.',
-            status_code=422,
-        )
+    result = await handle_chat_creation(
+        session=session,
+        user_id=current_user.id,
+        prompt=data.prompt,
+    )
+    if isinstance(result, ChatRedirectServiceResult):
+        return RedirectResponse(url=result.location, status_code=result.status_code)
 
-    try:
-        chat = await create_chat_with_llm_reply(session=session, user_id=current_user.id, prompt=prompt)
-    except RuntimeError as error:
-        chats = await list_user_chats(session=session, user_id=current_user.id)
-        return _render_chat_page(
-            request,
-            user=current_user,
-            chats=chats,
-            selected_chat=chats[0] if chats else None,
-            error_message=str(error),
-            prompt=prompt,
-            status_code=503,
-        )
-
-    return RedirectResponse(url=f'/chats?chat_id={chat.id}', status_code=303)
+    return _render_chat_page(
+        request,
+        user=current_user,
+        chats=result.chats,
+        selected_chat=result.selected_chat,
+        error_message=result.error_message,
+        prompt=result.prompt,
+        status_code=result.status_code,
+    )
 
 
 @chat_router.post('/chats/{chat_id}/messages', response_model=None)
@@ -151,169 +132,63 @@ async def send_message(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RedirectResponse | HTMLResponse:
     """Append a new message to an existing chat."""
-    chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
-    if chat is None:
-        raise HTTPException(status_code=404, detail='Chat not found.')
-
-    prompt = data.prompt.strip()
-    if not prompt:
-        chats = await list_user_chats(session=session, user_id=current_user.id)
-        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
-        return _render_chat_page(
-            request,
-            user=current_user,
-            chats=chats,
-            selected_chat=selected_chat,
-            error_message='Message cannot be empty.',
-            status_code=422,
-        )
-
     try:
-        await append_llm_reply(session=session, user_id=current_user.id, chat_id=chat.id, prompt=prompt)
-    except RuntimeError as error:
-        chats = await list_user_chats(session=session, user_id=current_user.id)
-        selected_chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
-        return _render_chat_page(
-            request,
-            user=current_user,
-            chats=chats,
-            selected_chat=selected_chat,
-            error_message=str(error),
-            prompt=prompt,
-            status_code=503,
+        result = await handle_message_submission(
+            session=session,
+            user_id=current_user.id,
+            chat_id=chat_id,
+            prompt=data.prompt,
         )
+    except ChatNotFoundError:
+        raise HTTPException(status_code=404, detail='Chat not found.') from None
 
-    return RedirectResponse(url=f'/chats?chat_id={chat_id}', status_code=303)
+    if isinstance(result, ChatRedirectServiceResult):
+        return RedirectResponse(url=result.location, status_code=result.status_code)
+
+    return _render_chat_page(
+        request,
+        user=current_user,
+        chats=result.chats,
+        selected_chat=result.selected_chat,
+        error_message=result.error_message,
+        prompt=result.prompt,
+        status_code=result.status_code,
+    )
 
 
 @chat_router.post('/chats/stream', response_class=StreamingResponse, response_model=None)
 async def create_chat_stream(
-    request: Request,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> Response:
+) -> StreamingResponse | PlainTextResponse:
     """Create a chat and stream the assistant response incrementally."""
-    prompt = data.prompt.strip()
-    if not prompt:
-        return PlainTextResponse('Message cannot be empty.', status_code=422)
+    result = await start_chat_creation_stream(
+        session=session,
+        user_id=current_user.id,
+        prompt=data.prompt,
+    )
+    if isinstance(result, ChatTextServiceResult):
+        return PlainTextResponse(result.message, status_code=result.status_code)
 
-    try:
-        chat = await create_chat_with_user_message(session=session, user_id=current_user.id, prompt=prompt)
-    except RuntimeError as error:
-        return PlainTextResponse(str(error), status_code=503)
-
-    async def event_stream() -> AsyncIterator[str]:
-        assistant_parts: list[str] = []
-        try:
-            yield _sse_event(
-                'meta',
-                {
-                    'chat_id': chat.id,
-                    'chat_title': chat.title,
-                    'chat_url': f'/chats?chat_id={chat.id}',
-                    'message_count': len(chat.messages),
-                },
-            )
-            async for token in get_llm_service().stream_reply(messages=chat.messages):
-                assistant_parts.append(token)
-                yield _sse_event('token', {'text': token})
-
-            final_reply = ''.join(assistant_parts).strip()
-            if not final_reply:
-                msg = 'The local model returned an empty response.'
-                raise RuntimeError(msg)
-
-            updated_chat = await persist_assistant_reply(
-                session=session,
-                user_id=current_user.id,
-                chat_id=chat.id,
-                content=final_reply,
-            )
-            if updated_chat is None:
-                msg = 'Chat not found.'
-                raise RuntimeError(msg)
-
-            yield _sse_event(
-                'done',
-                {
-                    'chat_id': updated_chat.id,
-                    'chat_url': f'/chats?chat_id={updated_chat.id}',
-                    'message_count': len(updated_chat.messages),
-                },
-            )
-        except Exception as error:
-            yield _sse_event('error', {'message': str(error)})
-
-    return _streaming_response(event_stream())
+    return _streaming_response(result.event_stream)
 
 
 @chat_router.post('/chats/{chat_id}/messages/stream', response_class=StreamingResponse, response_model=None)
 async def send_message_stream(
-    request: Request,
     chat_id: int,
     data: Annotated[ChatPromptForm, Form()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> StreamingResponse | PlainTextResponse:
     """Append a user message and stream the assistant response incrementally."""
-    chat = await get_user_chat(session=session, user_id=current_user.id, chat_id=chat_id)
-    if chat is None:
-        return PlainTextResponse('Chat not found.', status_code=404)
-
-    prompt = data.prompt.strip()
-    if not prompt:
-        return PlainTextResponse('Message cannot be empty.', status_code=422)
-
-    updated_chat = await append_user_message(
+    result = await start_message_stream(
         session=session,
         user_id=current_user.id,
-        chat_id=chat.id,
-        prompt=prompt,
+        chat_id=chat_id,
+        prompt=data.prompt,
     )
-    if updated_chat is None:
-        return PlainTextResponse('Chat not found.', status_code=404)
+    if isinstance(result, ChatTextServiceResult):
+        return PlainTextResponse(result.message, status_code=result.status_code)
 
-    async def event_stream() -> AsyncIterator[str]:
-        assistant_parts: list[str] = []
-        try:
-            yield _sse_event(
-                'meta',
-                {
-                    'chat_id': updated_chat.id,
-                    'chat_title': updated_chat.title,
-                    'chat_url': f'/chats?chat_id={updated_chat.id}',
-                    'message_count': len(updated_chat.messages),
-                },
-            )
-            async for token in get_llm_service().stream_reply(messages=updated_chat.messages):
-                assistant_parts.append(token)
-                yield _sse_event('token', {'text': token})
-
-            final_reply = ''.join(assistant_parts).strip()
-            if not final_reply:
-                msg = 'The local model returned an empty response.'
-                raise RuntimeError(msg)
-
-            final_chat = await persist_assistant_reply(
-                session=session,
-                user_id=current_user.id,
-                chat_id=updated_chat.id,
-                content=final_reply,
-            )
-            if final_chat is None:
-                msg = 'Chat not found.'
-                raise RuntimeError(msg)
-
-            yield _sse_event(
-                'done',
-                {
-                    'chat_id': final_chat.id,
-                    'chat_url': f'/chats?chat_id={final_chat.id}',
-                    'message_count': len(final_chat.messages),
-                },
-            )
-        except Exception as error:
-            yield _sse_event('error', {'message': str(error)})
-
-    return _streaming_response(event_stream())
+    return _streaming_response(result.event_stream)
